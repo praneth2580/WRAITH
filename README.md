@@ -6,6 +6,8 @@
 
 Web scraping and browser automation for Node.js, with human-like input you can tune or switch off, and optional AI from a local model or an API key. Everything runs in your own process: there's no server and no hosted service.
 
+**Documentation: [praneth2580.github.io/WRAITH](https://praneth2580.github.io/WRAITH/)**: guides, the full API reference and troubleshooting.
+
 > **Beta.** wraith is a pre-release. The API may still change before 1.0, so pin the exact version (`npm install wraithjs@beta --save-exact`) and read the [changelog](#changelog) before upgrading.
 
 - **Human behaviour, one option away.** Curved mouse paths with Fitts's-law timing and occasional overshoot, typing with corrected typos, wheel scrolling, reading pauses, and random delays between actions. Pick a preset or adjust any setting.
@@ -685,6 +687,8 @@ npm run publish:beta # typecheck, test and build, then publish under the npm "be
 ```
 
 **Devtools** (`npm run devtools`) is a local page for running wraith one action at a time and seeing what each did: the result, screenshots with the mouse path drawn on, keystroke timing, network requests and their responses, console output, wraith's log, and the step as code. Its `inspect` action shows which element a target matches and why it can't be clicked; `activity` shows what `waitForSettled()` is waiting for. It's only in the repository, not in the npm package. The server listens on 127.0.0.1 and needs a token only its own page has; set `PORT` to change the port.
+
+The documentation site is in `website/`, with its own `package.json`; see `website/README.md` to preview, check and deploy it to GitHub Pages.
 
 The source is in `src/`: `human/` (behaviour and input), `extract/` (selectors, Markdown, structured data), `net/` (rate limiting, retries, robots.txt), `ai/` (providers, extraction, `act`), plus `wait.ts`, `target.ts`, `capture.ts`, `paginate.ts`, `consent.ts`, `handoff.ts`, `page.ts`, `static-page.ts`, `crawl.ts` and `wraith.ts`. Code that runs inside the browser is in `in-page.ts`.
 

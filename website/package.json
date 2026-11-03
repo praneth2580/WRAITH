@@ -1,0 +1,17 @@
+{
+  "name": "wraith-website",
+  "private": true,
+  "description": "Landing page and documentation for wraithjs, published to GitHub Pages. Not part of the npm package.",
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview",
+    "check": "node scripts/check-snippets.mjs",
+    "deploy": "npm run build && gh-pages --dist .vitepress/dist --nojekyll --message \"Deploy documentation\""
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0",
+    "vitepress": "^1.6.4"
+  }
+}
