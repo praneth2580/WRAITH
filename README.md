@@ -690,4 +690,4 @@ The source is in `src/`: `human/` (behaviour and input), `extract/` (selectors, 
 
 ## License
 
-MIT
+[MIT](https://github.com/praneth2580/WRAITH/blob/main/LICENSE) © 2026 Praneth Pujari
