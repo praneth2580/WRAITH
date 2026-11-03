@@ -7,6 +7,18 @@ type AnyNode = Exclude<Parameters<typeof load>[0], string | Buffer | readonly un
 export interface ValueField {
   /** CSS selector inside the parent. Leave out to read the parent element itself. */
   selector?: string;
+  /**
+   * Match elements by their own text: a string matches the whole text, ignoring case and extra
+   * spaces; a RegExp is tested against it. Combine with `selector` to narrow the candidates and
+   * `attr` to read, e.g. `{ text: 'Next', attr: 'href' }`. For pages with generated class names.
+   */
+  text?: string | RegExp;
+  /**
+   * Read the value written next to a label: `{ near: 'Price' }` on "Price: ₹499" gives "₹499".
+   * Looks after the label in the same element, then the next sibling (dt/dd, th/td, label/span),
+   * then the element after the label's parent. Returns text; `attr` and `html` don't apply.
+   */
+  near?: string | RegExp;
   /** Read this attribute instead of the text. href, src, action and poster become absolute URLs. */
   attr?: string;
   /** Read inner HTML instead of text. */
@@ -98,14 +110,21 @@ function extractField(
   spec: ValueField | NestedField,
   baseUrl: string | undefined,
 ): unknown {
-  const matches: Cheerio<AnyNode> = spec.selector ? root.find(spec.selector) : root;
+  let matches: Cheerio<AnyNode> = spec.selector ? root.find(spec.selector) : root;
 
   if ('fields' in spec) {
     if (spec.list) return matches.toArray().map((el) => extractFields($, $(el), spec.fields, baseUrl));
     return matches.length > 0 ? extractFields($, matches.first(), spec.fields, baseUrl) : null;
   }
 
+  const pattern = spec.near ?? spec.text;
+  if (pattern !== undefined) {
+    const candidates = spec.selector ? matches : root.find('*');
+    matches = $(innermostMatching($, candidates, pattern, spec.near !== undefined));
+  }
+
   const read = (el: Cheerio<AnyNode>): string | null => {
+    if (spec.near !== undefined) return valueNear(el, spec.near);
     if (spec.attr) {
       const value = el.attr(spec.attr);
       if (value === undefined) return null;
@@ -126,6 +145,58 @@ function extractField(
   const value = matches.length > 0 ? read(matches.first()) : null;
   if (value === null) return spec.default ?? null;
   return spec.transform ? spec.transform(value) : value;
+}
+
+const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+function textMatches(text: string, pattern: string | RegExp, asLabel: boolean): boolean {
+  if (pattern instanceof RegExp) return pattern.test(text);
+  const wanted = collapse(pattern).toLowerCase();
+  const own = text.toLowerCase();
+  return asLabel ? own.startsWith(wanted) : own === wanted;
+}
+
+/**
+ * Elements whose text matches, keeping only the innermost: when a <div> and the <span> inside it
+ * both match, the span is the one that holds the text.
+ */
+function innermostMatching(
+  $: CheerioAPI,
+  candidates: Cheerio<AnyNode>,
+  pattern: string | RegExp,
+  asLabel: boolean,
+): AnyNode[] {
+  const matched = candidates.toArray().filter((el) => textMatches(collapse($(el).text()), pattern, asLabel));
+  return matched.filter((el) => !matched.some((other) => other !== el && $.contains(el as never, other as never)));
+}
+
+/** Removes the label from the start of `text`, along with the colon or dash after it. */
+function afterLabel(text: string, label: string | RegExp): string {
+  let rest: string;
+  if (label instanceof RegExp) {
+    const match = label.exec(text);
+    rest = match ? text.slice(match.index + match[0].length) : '';
+  } else {
+    rest = text.slice(collapse(label).length);
+  }
+  return rest.replace(/^[\s:：\-–—|=]+/, '').trim();
+}
+
+/** The value that goes with a label element. See ValueField.near. */
+function valueNear(label: Cheerio<AnyNode>, pattern: string | RegExp): string | null {
+  // "Price: ₹499" in one element.
+  const inline = afterLabel(collapse(label.text()), pattern);
+  if (inline) return inline;
+  // <li><b>Price:</b> ₹499</li>: the text right after the label.
+  const node = label[0] as { next?: { type?: string; data?: string } | null } | undefined;
+  const following = node?.next?.type === 'text' ? collapse(node.next.data ?? '') : '';
+  if (following) return following;
+  // <dt>Price</dt><dd>₹499</dd>, <th>…</th><td>…</td>, <span>Price</span><span>₹499</span>.
+  const sibling = collapse(label.next().text());
+  if (sibling) return sibling;
+  // <div><label>Price</label></div><div>₹499</div>.
+  const cousin = collapse(label.parent().next().text());
+  return cousin || null;
 }
 
 /** Turns `'a.next@href'` into `{ selector: 'a.next', attr: 'href' }`. */

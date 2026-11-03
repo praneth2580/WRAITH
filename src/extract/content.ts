@@ -58,7 +58,13 @@ function tidyMarkdown(markdown: string): string {
 export function htmlToText(html: string, selector?: string): string {
   const $ = load(html);
   $(NOISE).remove();
-  return select($, selector).text().replace(/\s+/g, ' ').trim();
+  // Join matches with a space so separate elements don't run together.
+  return select($, selector)
+    .toArray()
+    .map((el) => $(el).text())
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** Every http(s) link on the page: absolute, without #fragments, de-duplicated, in page order. */

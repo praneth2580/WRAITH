@@ -3,6 +3,7 @@ import { ContentAI, type AIClient } from './ai/client.js';
 import { WraithError } from './errors.js';
 import { extractLinks, htmlToMarkdown, htmlToText } from './extract/content.js';
 import { documentBaseUrl, extractWithSchema, type InferSchema, type SelectorSchema } from './extract/schema.js';
+import { structuredDataFromHtml, type StructuredData } from './extract/structured.js';
 
 /**
  * A page downloaded without a browser (`wraith.fetch()`). Much faster than a browser page, but
@@ -32,6 +33,14 @@ export class StaticPage {
   /** Pulls values out with CSS selectors. See SelectorSchema for the format. */
   extract<const S extends SelectorSchema>(schema: S): InferSchema<S> {
     return extractWithSchema(this.$, schema, this.baseUrl());
+  }
+
+  /**
+   * The page's machine-readable data: JSON-LD, microdata, OpenGraph and meta tags, and embedded
+   * JSON such as Next.js's __NEXT_DATA__. Survives redesigns and generated class names.
+   */
+  structuredData(): StructuredData {
+    return structuredDataFromHtml(this.$, this.baseUrl());
   }
 
   /** Every http(s) link on the page, absolute and de-duplicated. */

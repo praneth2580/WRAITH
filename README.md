@@ -6,9 +6,12 @@ Web scraping and browser automation for Node.js, with human-like input you can t
 - **Two ways to load a page.** A real browser (Playwright) for JavaScript-heavy sites, or a plain HTTP fetch, which is much faster, for pages that don't need JavaScript. Both use the same extraction API.
 - **Selector extraction with inferred types.** Describe the data with CSS selectors and get typed results back.
 - **Polite by default.** A per-host rate limit, retries with backoff, and optional robots.txt checks (including Crawl-delay).
+- **Waits that understand the page.** Clicks wait until a button is enabled and uncovered. `waitForSettled()` waits for requests, spinners and skeletons to finish.
+- **Robust to generated class names.** Find elements by role, label or text; read values next to their labels; pull JSON-LD, embedded app state, or the site's own API responses.
+- **Consent banners, pagination and hand-off.** Reject (or accept) cookie banners automatically, page through "Next", "Load more" and infinite scroll, and hand CAPTCHAs and one-time codes to a person.
 - **Optional AI.** Extract into a zod schema, ask questions about a page, or give plain-language instructions ("log in with %user%"). Works with Ollama (local), Claude, OpenAI, and any OpenAI-compatible server such as LM Studio, vLLM or OpenRouter.
 
-It builds on existing libraries rather than reinventing them: [Playwright](https://playwright.dev), [cheerio](https://cheerio.js.org), [zod](https://zod.dev), [p-queue](https://github.com/sindresorhus/p-queue), [p-retry](https://github.com/sindresorhus/p-retry), [robots-parser](https://github.com/samclarke/robots-parser) and [node-html-markdown](https://github.com/crosstype/node-html-markdown).
+It builds on existing libraries rather than reinventing them: [Playwright](https://playwright.dev), [cheerio](https://cheerio.js.org), [zod](https://zod.dev), [p-queue](https://github.com/sindresorhus/p-queue), [p-retry](https://github.com/sindresorhus/p-retry), [robots-parser](https://github.com/samclarke/robots-parser), [node-html-markdown](https://github.com/crosstype/node-html-markdown) and DuckDuckGo's [autoconsent](https://github.com/duckduckgo/autoconsent).
 
 ## Install
 
@@ -96,7 +99,7 @@ All the settings (times in ms, ranges are `[min, max]`):
 | `scroll.step`, `scroll.stepDelay` | Pixels per wheel tick; pause between ticks |
 | `reading.wordsPerMinute` | Pace for `page.read()` |
 
-How it works: clicks aim at a point near the element's centre (never its edges) and check that nothing covers it. The cursor follows a Bézier curve with a minimum-jerk speed profile, and Fitts's law sets how long each move takes. Elements below the fold are reached with wheel ticks, not a scroll jump. If a humanized click can't find a clear point (an iframe, or a covering overlay), it falls back to Playwright's own click.
+How it works: before clicking, wraith waits until the element is visible, enabled, no longer moving, and not covered by anything (a loading overlay, say), up to the timeout. It aims at a point near the element's centre, never its edges. The cursor follows a Bézier curve with a minimum-jerk speed profile, and Fitts's law sets how long each move takes. Elements below the fold are reached with wheel ticks, not a scroll jump. Elements inside iframes use Playwright's own click.
 
 ## Pages
 
@@ -111,12 +114,17 @@ How it works: clicks aim at a point near the element's centre (never its edges) 
 | `scroll({ by } \| { to: 'top' \| 'bottom' \| target })` | Wheel scrolling |
 | `autoScroll({ maxScrolls, idleMs })` | Keep scrolling while an infinite feed loads more |
 | `read({ maxMs })` | Skim the page at reading speed |
+| `paginate({ next \| loadMore \| scroll })` | Go through a paginated listing (see Pagination) |
 | `wait(ms \| [min, max])`, `waitFor(target, { state })` | |
-| `extract(schema)`, `links()`, `text()`, `markdown()`, `html()`, `screenshot()` | |
+| `waitForSettled()`, `waitForText()`, `waitForUrl()`, `waitUntil()` | See Waiting |
+| `extract(schema)`, `structuredData()`, `captureJson(match)` | See below |
+| `links()`, `text()`, `markdown()`, `html()`, `screenshot()` | |
+| `waitForConsent()`, `consentStatus()` | See Consent banners |
+| `detectChallenge()`, `handoff()` | See CAPTCHAs and verification codes |
 | `ai` | AI helpers (below) |
 | `raw` | The underlying Playwright `Page`, for anything else |
 
-A `target` is a selector string or a Playwright `Locator`. `wraith.fetch(url)` returns a `StaticPage` with `extract`, `links`, `text`, `markdown`, `json`, `status`, `headers`, `$` (cheerio) and `ai`.
+A `target` is a selector string, a Playwright `Locator`, or a description such as `{ role: 'button', name: 'Sign in' }` (see below). `wraith.fetch(url)` returns a `StaticPage` with `extract`, `structuredData`, `links`, `text`, `markdown`, `json`, `status`, `headers`, `$` (cheerio) and `ai`.
 
 ## Extracting with selectors
 
@@ -136,6 +144,125 @@ page.extract({
 ```
 
 The result type is inferred from the schema. For example, `price` is `number | null` and `items` is `{ name: string | null; url: string | null }[]`.
+
+## Sites with generated class names
+
+Classes like `css-1x2y3z`, `sc-bdfBwQ` or `Button_primary__3xYz` change with every deploy. Ways round them, most robust first:
+
+**1. Capture the site's own API.** Most modern sites load their data as JSON, with proper field names. Start capturing before the request happens:
+
+```ts
+const page = await wraith.newPage();
+const products = page.captureJson('/api/products');   // URL substring, RegExp, or (response) => boolean
+await page.goto(url);
+await page.autoScroll();
+console.log(products.data);                             // every matching response, parsed
+await products.next();                                  // or wait for the next one
+```
+
+**2. Read the data the page embeds** for search engines and its own scripts:
+
+```ts
+const data = await page.structuredData();              // static pages too: page.structuredData()
+jsonLdOfType(data, 'Product');                          // JSON-LD, with @graph unpacked
+data.microdata;                                         // schema.org itemprop data
+data.openGraph['og:title']; data.meta.description;
+data.embedded.__NEXT_DATA__;                            // also __NUXT__, __INITIAL_STATE__, __APOLLO_STATE__… in the browser
+```
+
+**3. Describe elements the way a person would.** Anywhere a target is accepted:
+
+```ts
+await page.click({ role: 'button', name: 'Add to cart' });
+await page.type({ label: 'Email' }, 'me@example.com');
+await page.click({ text: 'Next', within: { role: 'navigation' } });
+// also placeholder, alt, title, testId; exact: true; nth: 2
+```
+
+And in `extract()`, read values by the label next to them, or find elements by their text:
+
+```ts
+page.extract({
+  price: { near: 'Price' },                     // "Price: ₹499", <dt>Price</dt><dd>…</dd>, <th>…</th><td>…</td>, …
+  specs: { near: /^(SKU|Brand)$/, list: true },
+  next: { text: 'Next', attr: 'href' },
+  title: '[class^="ProductCard_title__"]',      // CSS modules: the prefix is stable, the hash isn't
+  rating: '[itemprop="ratingValue"]@content',
+});
+```
+
+**4. Let the AI read it.** `page.ai.extract(schema)` ignores markup entirely. It's the slowest and costliest option, so keep it for when the others don't work.
+
+## Waiting
+
+Clicks, key presses and selects already wait for the element to be clickable. After the action, they wait for any page load it started (`waits.afterAction`, default `'navigation'`). For everything else:
+
+```ts
+await page.click('#search');
+await page.waitForSettled();          // requests done, content stopped changing, no spinner/loader/skeleton
+await page.waitForText('results');
+await page.waitForUrl('**/checkout');
+await page.waitFor('.overlay', { state: 'hidden' });
+const total = await page.waitUntil(async () => Number(await page.text('.count')) || null);
+```
+
+`waitForSettled()` returns `false` instead of throwing if the page never goes quiet (a ticking clock or carousel). It recognises common loaders (`[aria-busy]`, spinners, loaders, skeletons, indeterminate progress bars). Add your own with `{ loaders: ['.my-overlay'] }`, or turn them off with `loaders: false`. To make every action wait like this:
+
+```ts
+createWraith({ waits: { afterAction: 'settle', settle: { networkIdleMs: 500, domIdleMs: 300, timeout: 15_000 } } });
+```
+
+## Pagination
+
+```ts
+for await (const n of page.paginate({ next: { role: 'link', name: 'Next' }, maxPages: 20 })) {
+  rows.push(...(await page.extract(schema)).rows);
+}
+// { loadMore: 'button.more' }   clicks until the button goes
+// { scroll: true }               infinite scroll
+```
+
+It stops when the control is gone or disabled, when a step changes nothing, or at `maxPages`. Without a browser, it follows the Next link's href:
+
+```ts
+for await (const page of wraith.paginate(url, { next: 'li.next a' })) { /* page is a StaticPage */ }
+```
+
+## Consent banners
+
+```ts
+createWraith({ consent: 'reject' });   // or 'accept'
+const page = await wraith.open(url);
+await page.waitForConsent();              // optional: { cmp, done, succeeded, hiddenOnly }
+```
+
+This uses DuckDuckGo's autoconsent rules (hundreds of consent platforms, in pages and iframes), plus its heuristic for custom banners. `'reject'` never clicks a banner's only Accept button. When there's no reject option it clicks an "OK"/"Got it" acknowledgement, or leaves the banner alone. The banner is answered with a DOM click, not a humanized one. It's off by default.
+
+## CAPTCHAs and verification codes
+
+wraith doesn't solve CAPTCHAs. It hands them to a person and carries on afterwards. `detectChallenge()` finds reCAPTCHA, hCaptcha, Turnstile, GeeTest, image CAPTCHAs, Cloudflare browser checks and one-time-code prompts. It ignores invisible and already-solved widgets, and returns a PNG of the challenge:
+
+```ts
+const challenge = await page.detectChallenge();
+// { kind: 'captcha' | 'otp' | 'browser-check', provider, message, image: Buffer, answerable, url }
+```
+
+`handoff()` gets a person through it. Their answer is typed in and submitted, and if the site rejects it they're asked again (up to three times). Otherwise wraith waits while they solve it in the browser window.
+
+```ts
+await page.handoff();   // visible browser: solve it in the window. Headless: answer in this terminal (the image path is printed)
+
+// Or ask them anywhere: your app, a chat bot, your phone.
+createWraith({
+  handoff: {
+    auto: true,                                   // check after every navigation and action
+    onChallenge: async (challenge) => askMyTeam(challenge.message, challenge.image),  // return the answer, or nothing once handled
+    timeout: 300_000,
+  },
+});
+```
+
+Widgets like reCAPTCHA need clicks, so they can only be solved in a visible browser (`headless: false`). Image CAPTCHAs and one-time codes can be answered from anywhere.
 
 ## Crawling
 
@@ -237,7 +364,7 @@ await wraith.saveSession('session.json'); // cookies + localStorage
 
 ## Errors
 
-Every error extends `WraithError`: `HttpError` (retries ran out), `RobotsDisallowedError`, `AIError` (a provider failed, refused, or replied outside the schema), and `MissingDependencyError` (an optional package isn't installed).
+Every error extends `WraithError`: `HttpError` (retries ran out), `RobotsDisallowedError`, `AIError` (a provider failed, refused, or replied outside the schema), `WaitTimeoutError`, `ChallengeError` (a CAPTCHA or code couldn't be handed off, or wasn't dealt with in time), and `MissingDependencyError` (an optional package isn't installed).
 
 Set `WRAITH_DEBUG=1`, or pass `logger: true`, to see retries and other events.
 
@@ -253,7 +380,7 @@ npx playwright install chromium
 npm test             # unit + browser tests against local servers (no internet or API keys needed)
 npm run typecheck
 npm run build        # emits dist/
-npm run example examples/static-scrape.ts   # also: human-login, crawl, ai
+npm run example examples/static-scrape.ts   # also: human-login, crawl, pagination, ai
 ```
 
-The source lives in `src/`: `human/` (behaviour and input), `extract/` (selectors and Markdown), `net/` (rate limiting, retries, robots.txt), `ai/` (providers, extraction, `act`), plus `page.ts`, `static-page.ts`, `crawl.ts` and `wraith.ts`.
+The source lives in `src/`: `human/` (behaviour and input), `extract/` (selectors, Markdown, structured data), `net/` (rate limiting, retries, robots.txt), `ai/` (providers, extraction, `act`), plus `wait.ts`, `target.ts`, `capture.ts`, `paginate.ts`, `consent.ts`, `handoff.ts`, `page.ts`, `static-page.ts`, `crawl.ts` and `wraith.ts`. Code that runs inside the browser lives in `in-page.ts`.

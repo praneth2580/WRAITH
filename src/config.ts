@@ -3,7 +3,10 @@ import type { AIOptions } from './ai/types.js';
 import { WraithError } from './errors.js';
 import { humanPresets, type HumanBehavior, type HumanPreset } from './human/behavior.js';
 import type { Range } from './human/random.js';
+import type { ConsentChoice } from './consent.js';
+import type { HandoffOptions } from './handoff.js';
 import type { Logger } from './logger.js';
+import type { AfterAction, SettleOptions } from './wait.js';
 
 export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends readonly unknown[] ? T[K] : T[K] extends object ? DeepPartial<T[K]> : T[K];
@@ -64,6 +67,33 @@ export interface WraithOptions {
   seed?: number;
   /** `true` logs to the console. Default: silent unless the WRAITH_DEBUG environment variable is set. */
   logger?: Logger | boolean;
+  /** What actions wait for, and the defaults for `page.waitForSettled()`. */
+  waits?: WaitOptions;
+  /**
+   * Answer cookie and consent banners automatically on every page: 'reject' refuses
+   * non-essential cookies, 'accept' accepts them. Default false (banners are left alone).
+   */
+  consent?: false | ConsentChoice;
+  /** Handing CAPTCHAs and one-time-code prompts to a person. */
+  handoff?: HandoffOptions;
+}
+
+export interface WaitOptions {
+  /**
+   * What to wait for after each click, key press and select. 'navigation' (default) waits for any
+   * page load the action starts; 'settle' also waits for the page to go quiet; 'none' doesn't wait.
+   */
+  afterAction?: AfterAction;
+  /** Defaults for `page.waitForSettled()` and 'settle'. */
+  settle?: SettleOptions;
+}
+
+export function resolveAfterAction(value: AfterAction | undefined): AfterAction {
+  const mode = value ?? 'navigation';
+  if (!['settle', 'navigation', 'none'].includes(mode)) {
+    throw new WraithError(`waits.afterAction must be 'settle', 'navigation' or 'none', not ${JSON.stringify(value)}`);
+  }
+  return mode;
 }
 
 export interface ResolvedNetwork {

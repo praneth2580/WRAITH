@@ -45,6 +45,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@duckduckgo/autoconsent": "^17.3.0",
     "cheerio": "^1.2.0",
     "node-html-markdown": "^2.0.0",
     "p-queue": "^9.3.5",

@@ -17,8 +17,8 @@ describe('functions that run in the browser', () => {
     expect(await nestedNameCalls('export function f() { const g = () => 1; return g(); }')).not.toEqual([]);
   });
 
-  it('src/ai/in-page.ts works under keepNames', async () => {
-    const source = await readFile(new URL('../src/ai/in-page.ts', import.meta.url), 'utf8');
+  it('src/in-page.ts works under keepNames', async () => {
+    const source = await readFile(new URL('../src/in-page.ts', import.meta.url), 'utf8');
     expect(await nestedNameCalls(source)).toEqual([]);
   });
 });

@@ -3,6 +3,7 @@ import type { HumanBehavior } from './behavior.js';
 import { neighbourKey } from './keyboard.js';
 import { clamp, humanPath, overshootPoint, pointInBox, type Box, type Point, type TimedPoint } from './mouse.js';
 import { sleep, type Range, type Rng } from './random.js';
+import { hitsElement, inTopFrame } from '../in-page.js';
 
 export interface ClickOptions {
   button?: 'left' | 'right' | 'middle';
@@ -35,6 +36,8 @@ export class Humanizer {
     private readonly page: Page,
     readonly behavior: HumanBehavior,
     readonly rng: Rng,
+    /** Used when an action doesn't pass its own timeout. */
+    private readonly defaultTimeout = 30_000,
   ) {}
 
   get enabled(): boolean {
@@ -55,12 +58,14 @@ export class Humanizer {
       return;
     }
 
+    const deadline = Date.now() + (timeout ?? this.defaultTimeout);
     await target.waitFor({ state: 'visible', timeout });
     await this.pause();
-    const aim = await this.aimAt(target);
+    const aim = await this.waitUntilClickable(target, deadline, true);
     if (!aim) {
-      // Covered, inside an iframe, or zero-sized: let Playwright's own checks handle it.
-      await target.click({ button, clickCount, timeout });
+      // Still disabled or covered at the deadline, or in an iframe: Playwright's own click waits a
+      // little longer and fails with a precise reason if it has to.
+      await target.click({ button, clickCount, timeout: Math.max(deadline - Date.now(), 1000) });
       return;
     }
     await this.moveTo(aim.point, aim.box.width);
@@ -79,11 +84,12 @@ export class Humanizer {
       await target.hover({ timeout: options.timeout });
       return;
     }
+    const deadline = Date.now() + (options.timeout ?? this.defaultTimeout);
     await target.waitFor({ state: 'visible', timeout: options.timeout });
     await this.pause();
-    const aim = await this.aimAt(target);
+    const aim = await this.waitUntilClickable(target, deadline, false);
     if (aim) await this.moveTo(aim.point, aim.box.width);
-    else await target.hover({ timeout: options.timeout });
+    else await target.hover({ timeout: Math.max(deadline - Date.now(), 1000) });
   }
 
   /** Clicks into the field, clears it if asked, then types one key at a time with occasional corrected typos. */
@@ -211,26 +217,55 @@ export class Humanizer {
     await this.follow(humanPath(from, to, this.rng, { ...this.behavior.mouse, targetWidth: 100 }));
   }
 
-  /** Scrolls the target into view and finds a point on it that is actually on top (not covered). */
-  private async aimAt(target: Locator): Promise<{ point: Point; box: Box } | undefined> {
+  /**
+   * Waits until the target can be clicked the way a person would: in view, enabled (when
+   * `needEnabled`), no longer moving, and not covered where we aim. Returns where to aim, or
+   * undefined if that didn't happen before the deadline or the target is inside an iframe.
+   */
+  private async waitUntilClickable(
+    target: Locator,
+    deadline: number,
+    needEnabled: boolean,
+  ): Promise<{ point: Point; box: Box } | undefined> {
+    // Box coordinates are relative to the top page, so hit-testing inside an iframe can't work.
+    if (!(await target.evaluate(inTopFrame).catch(() => true))) return undefined;
     await this.scrollIntoView(target);
     const viewport = await this.viewport();
+    let previous: Box | null = null;
+    while (Date.now() < deadline) {
+      const box = await target.boundingBox().catch(() => null);
+      const stable = box !== null && previous !== null && sameBox(box, previous);
+      previous = box;
+      if (!box || !stable) {
+        await sleep(50);
+        continue;
+      }
+      if (box.y + box.height <= 0 || box.y >= viewport.height) {
+        // A layout change pushed it off screen.
+        await this.scrollIntoView(target);
+        previous = null;
+        continue;
+      }
+      if (needEnabled && !(await target.isEnabled().catch(() => false))) {
+        await sleep(100);
+        continue;
+      }
+      const aim = await this.aimAt(target, box, viewport);
+      if (aim) return aim;
+      await sleep(100); // Covered, for example by a loading overlay.
+    }
+    return undefined;
+  }
+
+  /** Picks a point on the on-screen part of the target, trying a few until one isn't covered. */
+  private async aimAt(target: Locator, box: Box, viewport: Viewport): Promise<{ point: Point; box: Box } | undefined> {
+    const top = Math.max(box.y, 0);
+    const bottom = Math.min(box.y + box.height, viewport.height);
+    const visible = { x: box.x, y: top, width: box.width, height: bottom - top };
+    if (visible.width < 1 || visible.height < 1) return undefined;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const box = await target.boundingBox();
-      if (!box) return undefined;
-      // Only aim at the part that is on screen (matters for elements taller than the viewport).
-      const top = Math.max(box.y, 0);
-      const bottom = Math.min(box.y + box.height, viewport.height);
-      const visible = { x: box.x, y: top, width: box.width, height: bottom - top };
-      if (visible.width < 1 || visible.height < 1) return undefined;
       const point = pointInBox(visible, this.rng);
-      const hits = await target
-        .evaluate((el, p) => {
-          const hit = document.elementFromPoint(p.x, p.y);
-          return hit !== null && (hit === el || el.contains(hit));
-        }, point)
-        .catch(() => false);
-      if (hits) return { point, box: visible };
+      if (await target.evaluate(hitsElement, point).catch(() => false)) return { point, box: visible };
     }
     return undefined;
   }
@@ -271,3 +306,6 @@ async function currentValue(target: Locator): Promise<string> {
     return (await target.textContent().catch(() => null)) ?? '';
   }
 }
+
+const sameBox = (a: Box, b: Box) =>
+  Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1 && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1;

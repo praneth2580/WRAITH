@@ -2,15 +2,33 @@ import { load } from 'cheerio';
 import type { Locator, Page, Response } from 'playwright';
 import { PageAI } from './ai/act.js';
 import type { AIClient } from './ai/client.js';
+import { JsonCapture, type ResponseMatcher } from './capture.js';
+import type { ConsentManager, ConsentStatus } from './consent.js';
 import { HttpError, WraithError } from './errors.js';
 import { extractLinks, htmlToMarkdown, htmlToText } from './extract/content.js';
 import { documentBaseUrl, extractWithSchema, type InferSchema, type SelectorSchema } from './extract/schema.js';
+import { APP_STATE_GLOBALS, structuredDataFromHtml, type StructuredData } from './extract/structured.js';
+import { captureChallenge, findChallenge, runHandoff, type Challenge, type HandoffOptions, type ResolvedHandoff } from './handoff.js';
 import { Humanizer, type ClickOptions, type TypeOptions } from './human/humanizer.js';
 import { sleep, type Range } from './human/random.js';
+import { readAppState } from './in-page.js';
 import { isRetryableStatus, type Scheduler } from './net/scheduler.js';
+import { paginate, type PaginateOptions } from './paginate.js';
+import { resolveTarget, type Target } from './target.js';
+import {
+  resolveSettle,
+  waitForSettled,
+  waitUntil,
+  watchAction,
+  type ActionWatch,
+  type AfterAction,
+  type NetworkTracker,
+  type ResolvedSettle,
+  type SettleOptions,
+  type WaitUntilOptions,
+} from './wait.js';
 
-/** A CSS/Playwright selector string, or a Playwright Locator. */
-export type Target = string | Locator;
+export type { Target };
 
 export interface GotoOptions {
   /** When navigation counts as finished. Default 'load'. */
@@ -41,7 +59,13 @@ export interface ReadOptions {
 export interface PageServices {
   human: Humanizer;
   scheduler: Scheduler;
+  network: NetworkTracker;
   timeout: number;
+  afterAction: AfterAction;
+  settle: ResolvedSettle;
+  handoff: ResolvedHandoff;
+  headless: boolean;
+  consent: ConsentManager | undefined;
   ai: AIClient | undefined;
 }
 
@@ -53,6 +77,7 @@ export interface PageServices {
 export class WraithPage {
   readonly human: Humanizer;
   private aiHelper: PageAI | undefined;
+  private handingOff = false;
 
   constructor(
     readonly raw: Page,
@@ -74,22 +99,28 @@ export class WraithPage {
    * retrying timeouts, network errors and 408/425/429/5xx responses.
    */
   async goto(url: string, options: GotoOptions = {}): Promise<Response | null> {
-    return this.services.scheduler.run(url, async () => {
-      const response = await this.raw.goto(url, {
+    const response = await this.services.scheduler.run(url, async () => {
+      const res = await this.raw.goto(url, {
         waitUntil: options.waitUntil ?? 'load',
         timeout: options.timeout ?? this.services.timeout,
       });
-      if (response && isRetryableStatus(response.status())) throw new HttpError(response.status(), url);
-      return response;
+      if (res && isRetryableStatus(res.status())) throw new HttpError(res.status(), url);
+      return res;
     });
+    if (this.services.afterAction === 'settle') await this.waitForSettled();
+    await this.autoHandoff();
+    return response;
   }
 
+  // ---- Actions ---------------------------------------------------------------------------
+
+  /** Clicks once the target is visible, enabled, still and uncovered, then waits as `waits.afterAction` says. */
   click(target: Target, options?: ClickOptions): Promise<void> {
-    return this.human.click(this.locate(target), options);
+    return this.perform(() => this.human.click(this.locate(target), options));
   }
 
   dblclick(target: Target, options?: Omit<ClickOptions, 'clickCount'>): Promise<void> {
-    return this.human.click(this.locate(target), { ...options, clickCount: 2 });
+    return this.perform(() => this.human.click(this.locate(target), { ...options, clickCount: 2 }));
   }
 
   hover(target: Target, options?: { timeout?: number }): Promise<void> {
@@ -109,18 +140,18 @@ export class WraithPage {
   /** Presses a key or chord ("Enter", "ControlOrMeta+A"), on `target` if given, else on whatever has focus. */
   async press(key: string, options: { target?: Target; timeout?: number } = {}): Promise<void> {
     if (options.target) await this.locate(options.target).focus({ timeout: options.timeout });
-    await this.human.press(key);
+    await this.perform(() => this.human.press(key));
   }
 
   /** Chooses options in a <select> by value or visible label. */
   select(target: Target, values: string | string[], options?: { timeout?: number }): Promise<void> {
-    return this.human.select(this.locate(target), values, options);
+    return this.perform(() => this.human.select(this.locate(target), values, options));
   }
 
   /** Ticks (or with `checked: false`, unticks) a checkbox or radio, clicking only if it needs to change. */
   async check(target: Target, checked = true, options?: { timeout?: number }): Promise<void> {
     const locator = this.locate(target);
-    if ((await locator.isChecked(options)) !== checked) await this.human.click(locator, options);
+    if ((await locator.isChecked(options)) !== checked) await this.perform(() => this.human.click(locator, options));
   }
 
   async scroll(options: ScrollOptions): Promise<void> {
@@ -156,6 +187,31 @@ export class WraithPage {
   }
 
   /**
+   * Goes through a paginated listing, yielding 1, 2, 3… once each page (or batch) is loaded and
+   * settled. Stops when the control is gone or disabled, nothing changes, or `maxPages` is reached.
+   *
+   * ```ts
+   * for await (const n of page.paginate({ next: { role: 'link', name: 'Next' } })) {
+   *   rows.push(...(await page.extract(schema)).rows);
+   * }
+   * ```
+   */
+  paginate(options: PaginateOptions): AsyncGenerator<number> {
+    return paginate(
+      {
+        raw: this.raw,
+        locate: (target) => this.locate(target),
+        click: (target) => this.click(target),
+        scrollToBottom: () => this.scroll({ to: 'bottom' }),
+        settle: async () => {
+          await this.waitForSettled();
+        },
+      },
+      options,
+    );
+  }
+
+  /**
    * Scrolls through the page at reading speed, pausing and drifting the mouse as a reader would.
    * Takes as long as the text would take to read, up to `maxMs`. Does nothing when humanizing is off.
    */
@@ -180,12 +236,14 @@ export class WraithPage {
     await sleep(deadline - Date.now());
   }
 
+  // ---- Waiting ---------------------------------------------------------------------------
+
   /** Waits a fixed time, or a random time from a [min, max] range. */
   async wait(time: number | Range): Promise<void> {
     await sleep(typeof time === 'number' ? time : this.human.rng.inRange(time));
   }
 
-  /** Waits for an element to reach a state (default: visible). */
+  /** Waits for an element to reach a state (default: visible). `state: 'hidden'` waits for a loader to go. */
   async waitFor(
     target: Target,
     options?: { state?: 'attached' | 'detached' | 'visible' | 'hidden'; timeout?: number },
@@ -193,10 +251,67 @@ export class WraithPage {
     await this.locate(target).waitFor(options);
   }
 
-  /** Pulls values out of the current DOM with CSS selectors. See SelectorSchema for the format. */
+  /**
+   * Waits until the page has finished what it's doing: its requests done, its content no longer
+   * changing, and no spinner, loader or skeleton showing. Returns false if that didn't happen
+   * within the timeout (some pages never go fully quiet), rather than throwing.
+   */
+  waitForSettled(options?: SettleOptions): Promise<boolean> {
+    return waitForSettled(this.raw, this.services.network, resolveSettle(options, this.services.settle));
+  }
+
+  /** Waits for text to appear on the page (or inside `within`). Strings match as case-insensitive substrings. */
+  async waitForText(text: string | RegExp, options: { within?: Target; timeout?: number } = {}): Promise<void> {
+    const scope = options.within ? this.locate(options.within) : this.raw;
+    await scope.getByText(text).first().waitFor({ state: 'visible', timeout: options.timeout });
+  }
+
+  /** Waits for the URL to match: a glob like '**\/dashboard', a RegExp, or a predicate. */
+  async waitForUrl(url: string | RegExp | ((url: URL) => boolean), options: { timeout?: number } = {}): Promise<void> {
+    await this.raw.waitForURL(url, { timeout: options.timeout ?? this.services.timeout });
+  }
+
+  /**
+   * Polls `condition` until it returns something truthy, and returns that.
+   * `await page.waitUntil(async () => (await page.text('.status')) === 'Ready')`
+   */
+  waitUntil<T>(condition: () => T | Promise<T>, options?: WaitUntilOptions) {
+    return waitUntil(condition, options);
+  }
+
+  // ---- Reading ---------------------------------------------------------------------------
+
+  /** Pulls values out of the current DOM with CSS selectors or text. See SelectorSchema for the format. */
   async extract<const S extends SelectorSchema>(schema: S): Promise<InferSchema<S>> {
     const $ = load(await this.raw.content());
     return extractWithSchema($, schema, documentBaseUrl($, this.raw.url()));
+  }
+
+  /**
+   * The page's machine-readable data: JSON-LD, microdata, OpenGraph and meta tags, embedded JSON,
+   * and app state frameworks leave on `window`. Survives redesigns and generated class names.
+   */
+  async structuredData(): Promise<StructuredData> {
+    const $ = load(await this.raw.content());
+    const data = structuredDataFromHtml($, documentBaseUrl($, this.raw.url()));
+    const appState = await this.raw.evaluate(readAppState, APP_STATE_GLOBALS).catch(() => ({}));
+    data.embedded = { ...data.embedded, ...appState };
+    return data;
+  }
+
+  /**
+   * Starts collecting the JSON this page loads from its own API. Call it before the navigation or
+   * action that makes the requests.
+   *
+   * ```ts
+   * const products = page.captureJson('/api/products');
+   * await page.goto(url);
+   * await products.waitFor(1);
+   * console.log(products.data);
+   * ```
+   */
+  captureJson<T = unknown>(match: ResponseMatcher): JsonCapture<T> {
+    return new JsonCapture<T>(this.raw, match);
   }
 
   /** The current HTML of the whole page, or the outer HTML of the first match of `selector`. */
@@ -225,6 +340,64 @@ export class WraithPage {
     return this.raw.screenshot(options);
   }
 
+  // ---- Consent banners -------------------------------------------------------------------
+
+  /** What happened with this page's consent banner. Needs the `consent` option. */
+  consentStatus(): ConsentStatus {
+    return this.consentManager().statusOf(this.raw);
+  }
+
+  /**
+   * Waits until this page's consent banner has been dealt with, or `timeout` (default 5000 ms)
+   * passes, which is normal on pages without a banner. Needs the `consent` option.
+   */
+  waitForConsent(options: { timeout?: number } = {}): Promise<ConsentStatus> {
+    return this.consentManager().waitFor(this.raw, options.timeout ?? 5000);
+  }
+
+  // ---- CAPTCHAs and verification codes ---------------------------------------------------
+
+  /**
+   * Looks for a CAPTCHA, browser check or one-time-code prompt and returns it with a PNG of the
+   * challenge, without doing anything about it. Null if there isn't one. Use this to show the
+   * challenge to a person your own way, or call `handoff()` to have wraith manage it.
+   */
+  async detectChallenge(): Promise<Challenge | null> {
+    const found = await findChallenge(this.raw);
+    return found ? captureChallenge(this.raw, found) : null;
+  }
+
+  /**
+   * If a challenge is showing, gets a person through it: their answer is typed in and submitted,
+   * or wraith waits while they solve it in the browser window. Returns the challenge, or null if
+   * there was none. See the `handoff` option for who is asked and how.
+   */
+  async handoff(options: HandoffOptions = {}): Promise<Challenge | null> {
+    const settings = { ...this.services.handoff, ...withoutUndefined(options) };
+    this.handingOff = true;
+    try {
+      return await runHandoff(
+        {
+          raw: this.raw,
+          headless: this.services.headless,
+          typeAnswer: async (answer, submit) => {
+            const field = this.raw.locator('[data-wraith-answer]').first();
+            await this.human.type(field, answer, { typos: false });
+            if (!submit) return;
+            const watch = this.watch('settle');
+            await this.human.press('Enter');
+            await watch.done();
+          },
+        },
+        settings,
+      );
+    } finally {
+      this.handingOff = false;
+    }
+  }
+
+  // ---- AI --------------------------------------------------------------------------------
+
   /** AI extraction, questions, and plain-language actions on this page. Needs the `ai` option. */
   get ai(): PageAI {
     const client = this.services.ai;
@@ -234,6 +407,8 @@ export class WraithPage {
       async (selector) => ({ url: this.raw.url(), markdown: await this.markdown(selector) }),
       this.raw,
       this.human,
+      // act() always needs page loads finished before it looks again, even with afterAction 'none'.
+      () => this.watchWithHandoff(this.services.afterAction === 'none' ? 'navigation' : this.services.afterAction),
     );
     return this.aiHelper;
   }
@@ -242,8 +417,47 @@ export class WraithPage {
     return this.raw.close();
   }
 
+  // ---- Internals -------------------------------------------------------------------------
+
   private locate(target: Target): Locator {
-    return typeof target === 'string' ? this.raw.locator(target).first() : target;
+    return resolveTarget(this.raw, target);
+  }
+
+  /** Runs an action, then waits as `waits.afterAction` says and hands off any challenge if `handoff.auto`. */
+  private async perform(action: () => Promise<void>): Promise<void> {
+    const watch = this.watchWithHandoff(this.services.afterAction);
+    try {
+      await action();
+    } catch (error) {
+      watch.cancel();
+      throw error;
+    }
+    await watch.done();
+  }
+
+  private watch(mode: AfterAction): ActionWatch {
+    return watchAction(this.raw, this.services.network, mode, this.services.settle, this.services.timeout);
+  }
+
+  private watchWithHandoff(mode: AfterAction): ActionWatch {
+    const watch = this.watch(mode);
+    return {
+      cancel: () => watch.cancel(),
+      done: async () => {
+        await watch.done();
+        await this.autoHandoff();
+      },
+    };
+  }
+
+  private async autoHandoff(): Promise<void> {
+    if (this.services.handoff.auto && !this.handingOff && !this.raw.isClosed()) await this.handoff();
+  }
+
+  private consentManager(): ConsentManager {
+    const manager = this.services.consent;
+    if (!manager) throw new WraithError("Consent handling is off. Pass { consent: 'reject' } (or 'accept') to createWraith().");
+    return manager;
   }
 
   private async scrollHeight(): Promise<number> {
@@ -256,4 +470,8 @@ export class WraithPage {
       max: Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
     }));
   }
+}
+
+function withoutUndefined<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as Partial<T>;
 }

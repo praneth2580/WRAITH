@@ -1,10 +1,10 @@
-import type { Frame, Page, Request } from 'playwright';
+import type { Page } from 'playwright';
 import { z } from 'zod';
 import { AIError } from '../errors.js';
 import type { Humanizer } from '../human/humanizer.js';
-import { sleep } from '../human/random.js';
 import { ContentAI, type AIClient, type PageContent } from './client.js';
-import { collectElements, type RawElement } from './in-page.js';
+import { collectElements, type RawElement } from '../in-page.js';
+import type { ActionWatch } from '../wait.js';
 
 export interface ActOptions {
   /** Most actions to take before giving up. Default 5. */
@@ -115,38 +115,6 @@ function fillVariables(value: string, variables: Record<string, string>): string
   return value.replace(/%(\w+)%/g, (match, name: string) => (Object.hasOwn(variables, name) ? variables[name]! : match));
 }
 
-/**
- * Starts watching for a main-frame navigation. Call it before an action, then await the returned
- * function afterwards: if the action started a page load, that waits for the new page to load.
- * Watching from before the action means a fast navigation can't slip past unnoticed.
- */
-function watchNavigation(page: Page, timeout: number): () => Promise<void> {
-  const frame = page.mainFrame();
-  let started = false;
-  let committed = false;
-  const onRequest = (request: Request) => {
-    if (request.isNavigationRequest() && request.frame() === frame) started = true;
-  };
-  const onNavigated = (navigated: Frame) => {
-    if (navigated === frame) committed = true;
-  };
-  page.on('request', onRequest);
-  page.on('framenavigated', onNavigated);
-  return async () => {
-    // Clicks and key presses can take a moment to kick off a navigation.
-    await sleep(300);
-    try {
-      if (started && !committed) {
-        await page.waitForEvent('framenavigated', { predicate: (f) => f === frame, timeout }).catch(() => {});
-      }
-      if (started) await page.waitForLoadState('load', { timeout }).catch(() => {});
-    } finally {
-      page.off('request', onRequest);
-      page.off('framenavigated', onNavigated);
-    }
-  };
-}
-
 /** Runs one decision on the page. Throws if it can't. */
 async function perform(
   page: Page,
@@ -189,6 +157,8 @@ export class PageAI extends ContentAI {
     read: (selector?: string) => Promise<PageContent>,
     private readonly page: Page,
     private readonly human: Humanizer,
+    /** Starts watching before an action; awaiting done() waits for what it set off. */
+    private readonly watch: () => ActionWatch,
   ) {
     super(client, read);
   }
@@ -228,7 +198,7 @@ export class PageAI extends ContentAI {
         reason: decision.reason,
       };
       steps.push(step);
-      const settled = watchNavigation(this.page, timeout);
+      const watch = this.watch();
       try {
         await perform(this.page, this.human, decision, element, variables, timeout);
       } catch (error) {
@@ -236,7 +206,7 @@ export class PageAI extends ContentAI {
       } finally {
         // Let whatever the action set off (a form post, a menu opening) finish, both before the
         // model looks again and before act() returns.
-        await settled();
+        await watch.done();
       }
       if (!step.error && decision.finished) return { success: true, steps, message: decision.reason };
     }

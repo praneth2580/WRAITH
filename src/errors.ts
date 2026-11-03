@@ -26,6 +26,12 @@ export class RobotsDisallowedError extends WraithError {
 /** An AI provider failed, refused, or replied with something that doesn't fit the schema. */
 export class AIError extends WraithError {}
 
+/** A wait ran out of time. */
+export class WaitTimeoutError extends WraithError {}
+
+/** A CAPTCHA or verification step couldn't be handed to a person, or wasn't solved in time. */
+export class ChallengeError extends WraithError {}
+
 /** An optional package (such as an AI SDK) is needed but not installed. */
 export class MissingDependencyError extends WraithError {
   constructor(
