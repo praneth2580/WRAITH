@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="devtools-token" content="%TOKEN%">
+  <title>wraith devtools</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1><strong>wraith</strong> devtools</h1>
+    <span id="status" class="status">No browser</span>
+    <span class="spacer"></span>
+    <button id="refresh" type="button" title="Show the page as it is now">Refresh view</button>
+    <button id="close-session" type="button">Close browser</button>
+  </header>
+
+  <main>
+    <aside id="controls">
+      <details id="session-panel" open>
+        <summary>Browser</summary>
+        <form id="session-form" autocomplete="off">
+          <div class="row">
+            <label>Engine
+              <select name="browser"><option>chromium</option><option>firefox</option><option>webkit</option></select>
+            </label>
+            <label>Human
+              <select name="human"><option>off</option><option>fast</option><option selected>natural</option><option>careful</option></select>
+            </label>
+          </div>
+          <div class="row">
+            <label>After each action
+              <select name="afterAction"><option>navigation</option><option>settle</option><option>none</option></select>
+            </label>
+            <label>Consent banners
+              <select name="consent"><option value="">leave alone</option><option value="reject">reject</option><option value="accept">accept</option></select>
+            </label>
+          </div>
+          <div class="row">
+            <label>Seed <input name="seed" type="number" placeholder="random"></label>
+            <label class="check"><input name="headless" type="checkbox" checked> Headless</label>
+          </div>
+          <fieldset>
+            <legend>Don't download</legend>
+            <label class="check"><input name="block" type="checkbox" value="image"> images</label>
+            <label class="check"><input name="block" type="checkbox" value="media"> media</label>
+            <label class="check"><input name="block" type="checkbox" value="font"> fonts</label>
+            <label class="check"><input name="block" type="checkbox" value="stylesheet"> CSS</label>
+          </fieldset>
+          <label>More options (JSON, merged in)
+            <textarea name="extra" rows="3" spellcheck="false" placeholder='{ "ai": { "provider": "ollama", "model": "qwen2.5:7b" } }'></textarea>
+          </label>
+          <p class="hint">Saved in this browser. Leave API keys out: set ANTHROPIC_API_KEY or OPENAI_API_KEY before <code>npm run devtools</code>.</p>
+          <button type="submit" class="primary">Launch</button>
+        </form>
+      </details>
+
+      <form id="action-form" autocomplete="off">
+        <label>Action <select name="action" id="action-select"></select></label>
+        <p id="action-help" class="hint"></p>
+        <div id="fields"></div>
+        <div class="row run-row">
+          <button type="submit" id="run" class="primary">Run</button>
+          <span class="hint">Ctrl+Enter</span>
+        </div>
+      </form>
+    </aside>
+
+    <section id="stage">
+      <form id="address" autocomplete="off">
+        <input name="url" placeholder="Go to a URL…" spellcheck="false">
+        <button type="submit">Go</button>
+      </form>
+
+      <div class="viewer-bar">
+        <span class="segmented">
+          <button type="button" data-frame="click" title="Just before the first mouse press, where the mouse path lines up">At click</button>
+          <button type="button" data-frame="after">After</button>
+        </span>
+        <label class="check"><input id="show-path" type="checkbox" checked> Mouse path</label>
+        <label class="check"><input id="show-boxes" type="checkbox" checked> Boxes</label>
+        <span id="view-caption" class="hint"></span>
+      </div>
+
+      <div id="viewer">
+        <div id="frame" hidden>
+          <img id="shot" alt="The page">
+          <canvas id="overlay"></canvas>
+        </div>
+        <p id="empty" class="hint">Launch a browser and go to a page. Each action's screenshot shows here.</p>
+      </div>
+
+      <nav id="tabs">
+        <button type="button" data-tab="result">Result</button>
+        <button type="button" data-tab="input">Mouse &amp; keys</button>
+        <button type="button" data-tab="network">Network</button>
+        <button type="button" data-tab="console">Console</button>
+        <button type="button" data-tab="logs">Log</button>
+        <button type="button" data-tab="code">Code</button>
+      </nav>
+      <div id="detail"></div>
+    </section>
+
+    <aside id="timeline-panel">
+      <div class="panel-head">
+        <h2>Timeline</h2>
+        <button id="clear" type="button">Clear</button>
+      </div>
+      <ol id="timeline"></ol>
+    </aside>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

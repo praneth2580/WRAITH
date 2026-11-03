@@ -381,6 +381,18 @@ npm test             # unit + browser tests against local servers (no internet o
 npm run typecheck
 npm run build        # emits dist/
 npm run example examples/static-scrape.ts   # also: human-login, crawl, pagination, ai
+npm run devtools     # the diagnostic UI at http://127.0.0.1:4477
 ```
+
+### Devtools
+
+`npm run devtools` starts a local page for trying wraith one action at a time and seeing what each did. It's for development only: it lives in `devtools/` and isn't part of the published package.
+
+- **Browser:** launch with any engine, human preset, `afterAction`, consent setting and blocked resources. Other options go in as JSON (`{ "ai": { "provider": "ollama", "model": "qwen2.5:7b" } }`). Untick Headless to watch the real window.
+- **Actions:** every page method (click, type, waits, extract, paginate, handoff, `ai.*`…), plus `fetch` without a browser and `evaluate`. Targets take a selector or a JSON target such as `{"role": "button", "name": "/sign in/i"}`.
+- **Diagnose:** `inspect` shows every element a target matches, which one wraith would use, and whether it's visible, enabled and uncovered, outlined on the screenshot. `activity` shows what `waitForSettled` is still waiting on: requests in flight, loaders showing, recent content changes.
+- **For each action:** the result, a screenshot (and one taken just before the click, with the mouse path drawn over it), mouse and keystroke timing, network requests with their responses, console output, wraith's log, and the same step as code. "Every successful step so far" turns a session into a starting script.
+
+The server listens on 127.0.0.1 only and needs a token that only the page it serves has, so sites open in the driven browser can't use it. Set `PORT` to change the port.
 
 The source lives in `src/`: `human/` (behaviour and input), `extract/` (selectors, Markdown, structured data), `net/` (rate limiting, retries, robots.txt), `ai/` (providers, extraction, `act`), plus `wait.ts`, `target.ts`, `capture.ts`, `paginate.ts`, `consent.ts`, `handoff.ts`, `page.ts`, `static-page.ts`, `crawl.ts` and `wraith.ts`. Code that runs inside the browser lives in `in-page.ts`.

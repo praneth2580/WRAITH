@@ -61,10 +61,10 @@ export function resolveSettle(options: SettleOptions = {}, base?: ResolvedSettle
 }
 
 /** Request types that mean the page is still fetching what it needs. Images, fonts and media don't count. */
-const TRACKED_TYPES = new Set(['document', 'xhr', 'fetch', 'script']);
+export const TRACKED_TYPES = new Set(['document', 'xhr', 'fetch', 'script']);
 
 /** Requests running longer than this (long polling, streams) stop counting as "busy". */
-const LONG_REQUEST_MS = 5000;
+export const LONG_REQUEST_MS = 5000;
 
 /** Counts the main frame's in-flight requests, to tell when the network has gone quiet. */
 export class NetworkTracker {

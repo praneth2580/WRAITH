@@ -50,8 +50,15 @@ function isLocator(target: Locator | TargetQuery): target is Locator {
 
 /** Turns any Target into a Locator for one element. */
 export function resolveTarget(page: Page, target: Target): Locator {
-  if (typeof target === 'string') return page.locator(target).first();
-  if (isLocator(target)) return target;
+  if (typeof target !== 'string' && isLocator(target)) return target;
+  const nth = typeof target === 'string' ? undefined : target.nth;
+  const all = matchTarget(page, target);
+  return nth !== undefined ? all.nth(nth) : all.first();
+}
+
+/** Every element a selector or TargetQuery matches, before one is picked. */
+export function matchTarget(page: Page, target: string | TargetQuery): Locator {
+  if (typeof target === 'string') return page.locator(target);
 
   const keys = KEYS.filter((key) => target[key] !== undefined);
   if (keys.length !== 1) {
@@ -84,5 +91,5 @@ export function resolveTarget(page: Page, target: Target): Locator {
     default:
       locator = scope.getByTestId(target.testId!);
   }
-  return target.nth !== undefined ? locator.nth(target.nth) : locator.first();
+  return locator;
 }
