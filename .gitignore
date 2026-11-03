@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+
+# Website build output and caches
+website/.vitepress/cache
+website/.snippets
