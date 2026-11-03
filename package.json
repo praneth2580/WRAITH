@@ -1,6 +1,6 @@
 {
   "name": "wraithjs",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.0",
   "description": "Web scraping and browser automation with human-like behaviour and optional AI, all running in your own process.",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,13 +18,17 @@
   "engines": {
     "node": ">=20.18.1"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "example": "tsx",
     "devtools": "tsx devtools/server.ts",
+    "publish:beta": "npm publish --tag beta",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "keywords": [
