@@ -103,7 +103,6 @@ export default defineConfig({
       { icon: 'npm', link: 'https://www.npmjs.com/package/wraithjs' },
     ],
     search: { provider: 'local' },
-    editLink: { pattern: `${repo}/edit/main/website/:path`, text: 'Edit this page on GitHub' },
     outline: { level: [2, 3] },
     footer: {
       message: 'Released under the MIT License. Beta: the API may change before 1.0.',
