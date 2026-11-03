@@ -137,6 +137,8 @@ const { books } = page.extract({
 - **Listings:** [Next buttons, Load more and infinite scroll](/guide/pagination), or [crawl a whole site](/guide/crawling) breadth-first.
 - **Interruptions:** [cookie banners](/guide/consent), and [CAPTCHAs and one-time codes handed to a person](/guide/captchas).
 - **Hard cases:** [AI extraction and plain-language actions](/guide/ai) with a local model or an API key.
+- **Scale:** [proxies, user agents and parallel browser sessions](/guide/proxies), from one option each.
+- **Traps:** [avoid honeypots](/guide/honeypots), the hidden links and fields sites plant to catch bots.
 
 ## Built on solid libraries
 

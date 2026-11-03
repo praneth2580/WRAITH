@@ -41,3 +41,18 @@ export class MissingDependencyError extends WraithError {
     super(`${feature} needs the "${packageName}" package. Install it with: npm install ${packageName}`);
   }
 }
+
+/** With `avoidHoneypots`, an action was refused because a person couldn't see the element. */
+export class HoneypotError extends WraithError {
+  constructor(
+    /** Why it isn't visible, such as "transparent (opacity 0)". */
+    readonly reason: string,
+    /** The element, as `tag#id.class "text"`. */
+    readonly element: string,
+  ) {
+    super(
+      `Refused to use ${element}: a person couldn't see it (${reason}), so it looks like a honeypot for bots. ` +
+        'Wait for it to become visible, or turn off avoidHoneypots to use it anyway.',
+    );
+  }
+}

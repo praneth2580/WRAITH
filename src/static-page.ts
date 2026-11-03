@@ -22,6 +22,7 @@ export class StaticPage {
     /** The raw response body. */
     readonly body: string,
     private readonly aiClient?: AIClient,
+    private readonly options: { avoidHoneypots?: boolean } = {},
   ) {
     this.$ = load(body);
   }
@@ -45,7 +46,7 @@ export class StaticPage {
 
   /** Every http(s) link on the page, absolute and de-duplicated. */
   links(): string[] {
-    return extractLinks(this.$, this.baseUrl());
+    return extractLinks(this.$, this.baseUrl(), { skipHidden: this.options.avoidHoneypots });
   }
 
   /** Visible text, or the text under `selector`. */

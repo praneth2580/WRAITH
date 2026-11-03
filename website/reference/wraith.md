@@ -10,15 +10,15 @@ The object [`createWraith()`](/reference/create-wraith) returns. It holds one br
 open(url: string, options?: GotoOptions & NewPageOptions): Promise<WraithPage>
 ```
 
-Opens a new tab and navigates to `url`. Options: `waitUntil` (`'load'` default, `'domcontentloaded'`, `'networkidle'`, `'commit'`), `timeout`, and `human` to override the human behaviour for this tab. If the navigation fails, the tab is closed and the error thrown.
+Opens a new tab and navigates to `url`. Options: `waitUntil` (`'load'` default, `'domcontentloaded'`, `'networkidle'`, `'commit'`), `timeout`, `human` to override the human behaviour for this tab, and `instance` to choose the [instance](/guide/proxies#instances). If the navigation fails, the tab is closed and the error thrown.
 
 ### newPage()
 
 ```ts sig
-newPage(options?: { human?: HumanOption }): Promise<WraithPage>
+newPage(options?: { human?: HumanOption; instance?: number }): Promise<WraithPage>
 ```
 
-Opens a blank tab. Launches the browser if it isn't running.
+Opens a blank tab in the instance with the fewest open pages, or in `instance` (from 0). Launches the browser if it isn't running. Throws `WraithError` for an instance number out of range.
 
 ### fetch()
 
@@ -75,18 +75,18 @@ Returns `{ results: { url, depth, data }[], errors: { url, error }[] }`. [Guide]
 ### saveSession()
 
 ```ts sig
-saveSession(path: string): Promise<void>
+saveSession(path: string, instance?: number): Promise<void>
 ```
 
-Writes cookies and localStorage to a JSON file. Start a later `Wraith` from it with `context: { storageState: path }`.
+Writes an instance's (default the first) cookies and localStorage to a JSON file. Start a later `Wraith` from it with `context: { storageState: path }`.
 
 ### context()
 
 ```ts sig
-context(): Promise<BrowserContext>
+context(instance?: number): Promise<BrowserContext>
 ```
 
-The Playwright `BrowserContext`, launching the browser if needed.
+An instance's (default the first) Playwright `BrowserContext`, launching the browser if needed.
 
 ### close()
 
@@ -94,7 +94,7 @@ The Playwright `BrowserContext`, launching the browser if needed.
 close(): Promise<void>
 ```
 
-Closes the browser. Static fetches keep working afterwards, and opening a browser page launches a new browser.
+Closes every browser, instance and proxy connection. Static fetches keep working afterwards, and opening a browser page launches a new browser.
 
 ## AI
 
@@ -120,3 +120,4 @@ AI over content you already have. Throws if the `ai` option isn't set.
 | `human` | `HumanBehavior` | The resolved human settings |
 | `network` | `ResolvedNetwork` | The resolved network settings |
 | `logger` | `Logger` | |
+| `instanceCount` | `number` | How many instances this `Wraith` runs |

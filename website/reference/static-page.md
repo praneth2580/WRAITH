@@ -19,7 +19,7 @@ A page downloaded without a browser, from `wraith.fetch()`, `wraith.paginate()` 
 | --- | --- | --- |
 | `extract(schema)` | `InferSchema<S>` | [Selector schemas](/reference/selector-schemas) |
 | `structuredData()` | `StructuredData` | JSON-LD, microdata, OpenGraph, meta tags and embedded JSON |
-| `links()` | `string[]` | Every http(s) link: absolute, no fragments, de-duplicated |
+| `links()` | `string[]` | Every http(s) link: absolute, no fragments, de-duplicated. With `avoidHoneypots`, leaves out links the markup hides ([how](/guide/honeypots#static-pages)) |
 | `text(selector?)` | `string` | Visible text. Throws if `selector` matches nothing |
 | `markdown(selector?)` | `string` | Clean Markdown with absolute links |
 | `json<T>()` | `T` | Parses the body as JSON |

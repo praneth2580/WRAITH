@@ -517,6 +517,14 @@ const actions: Action[] = [
     code: (a) => `// ${lit(a.target)} — inspected in devtools`,
   },
   {
+    name: 'honeypots',
+    group: 'Diagnose',
+    help: "Links, buttons and fields a person couldn't see (hidden, transparent, off the page, tiny, clipped, camouflaged), outlined on the screenshot. These are what avoidHoneypots steers clear of.",
+    fields: [],
+    run: ({ page }) => page.honeypots(),
+    code: () => 'const traps = await page.honeypots();',
+  },
+  {
     name: 'activity',
     group: 'Diagnose',
     help: "What waitForSettled is waiting on right now: requests in flight, recent content changes, loaders showing. Checks the built-in loader selectors only.",

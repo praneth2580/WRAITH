@@ -39,3 +39,14 @@ First public beta.
 **Network**
 
 - Per-host rate limiting, retries with exponential backoff, optional robots.txt checks with Crawl-delay.
+- Proxies (HTTP, HTTPS, SOCKS5) for browser pages, static fetches and robots.txt, rotated from a list.
+
+- User agents from a list or a built-in set of current browsers (`userAgent: 'rotate'`), one per instance and per proxy.
+
+**Honeypots**
+
+- `avoidHoneypots`: actions refuse elements hidden from people (`HoneypotError`), `links()` and crawls skip hidden links, and `ai.act()` never sees them. `page.honeypots()` lists them with reasons.
+
+**Instances**
+
+- Several independent browser sessions per `Wraith` (`instances`), as contexts in one browser or as separate browsers. Pages go to the least busy instance, or the one you choose; a crashed instance restarts on next use.

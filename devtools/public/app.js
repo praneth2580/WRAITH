@@ -321,7 +321,7 @@ function drawBoxes(ctx, e, px) {
   for (const item of boxesIn(e.result)) {
     const { x, y, width, height } = item.box;
     const chosen = uses !== undefined && item.index === uses;
-    const color = item.selector ? '#f08c00' : chosen ? '#e8590c' : '#4c6ef5';
+    const color = item.reason ? '#e03131' : item.selector ? '#f08c00' : chosen ? '#e8590c' : '#4c6ef5';
     ctx.strokeStyle = color;
     ctx.setLineDash(uses !== undefined && !chosen ? [5 * px, 4 * px] : []);
     ctx.strokeRect(x, y, width, height);

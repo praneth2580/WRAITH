@@ -22,7 +22,7 @@ export interface RawElement {
  * Tags each visible, enabled interactive element with data-wraith-id and describes it. Field
  * values are never read, only whether a field is empty, so secrets don't reach the model.
  */
-export function collectElements(max: number): RawElement[] {
+export function collectElements(max: number, isHoneypot?: (el: Element) => string | null): RawElement[] {
   const selector = [
     'a[href]',
     'button',
@@ -55,6 +55,7 @@ export function collectElements(max: number): RawElement[] {
     const style = getComputedStyle(el);
     if (style.visibility === 'hidden' || style.display === 'none') continue;
     if ((el as HTMLButtonElement).disabled) continue;
+    if (isHoneypot?.(el)) continue;
 
     const tag = el.tagName.toLowerCase();
     const input = el as HTMLInputElement;
@@ -286,4 +287,147 @@ export function clickConsentAccept(): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Why a person couldn't see or reach `el`, or null if they could. Honeypots are links, buttons and
+ * fields that are in the page's code but not visible, put there so that whatever uses them is
+ * known to be a bot: hidden links that crawlers follow, invisible buttons, form fields only a bot
+ * would fill in.
+ */
+export function honeypotReason(el: Element): string | null {
+  if (!el.isConnected) return 'no longer on the page';
+  const style = getComputedStyle(el);
+  // A wrapper without a box of its own; its children are what show.
+  if (style.display === 'contents') return null;
+
+  // A form control styled away behind a label people can see (custom checkboxes, file pickers) is
+  // what they click, through the label. A trap field hidden along with its label isn't.
+  const labels = (el as HTMLInputElement).labels;
+  if (labels) {
+    for (const label of Array.from(labels)) if (honeypotReason(label) === null) return null;
+  }
+
+  const shown = el.checkVisibility
+    ? el.checkVisibility({ visibilityProperty: true })
+    : style.display !== 'none' && style.visibility === 'visible';
+  if (!shown) return style.visibility === 'visible' ? 'hidden (display: none, on it or a parent)' : 'hidden (visibility: hidden)';
+
+  let opacity = 1;
+  for (let node: Element | null = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+  if (opacity < 0.1) return `transparent (opacity ${Math.round(opacity * 100) / 100})`;
+
+  // An inline link around a block can measure nothing while its content shows; use the content.
+  let box = el.getBoundingClientRect();
+  if (box.width < 2 || box.height < 2) {
+    const own = box;
+    for (const child of Array.from(el.querySelectorAll('*')).slice(0, 50)) {
+      const childBox = child.getBoundingClientRect();
+      if (childBox.width >= 2 && childBox.height >= 2) {
+        box = childBox;
+        break;
+      }
+    }
+    if (box === own) return `too small to see (${Math.round(own.width)}×${Math.round(own.height)} px)`;
+  }
+
+  const root = document.documentElement;
+  const left = box.left + window.scrollX;
+  const top = box.top + window.scrollY;
+  if (left + box.width <= 0 || top + box.height <= 0) return 'positioned off the page';
+  if (left >= Math.max(root.scrollWidth, root.clientWidth) || top >= Math.max(root.scrollHeight, root.clientHeight)) {
+    return 'positioned off the page';
+  }
+
+  if (style.clip === 'rect(0px, 0px, 0px, 0px)' || /inset\(\s*(50|100)%/.test(style.clipPath)) return 'clipped to nothing';
+
+  // Cut off by a container that hides its overflow. A fixed-position element escapes its
+  // ancestors' clipping, so stop looking there.
+  for (let child: Element = el, node = el.parentElement; node && node !== root; child = node, node = node.parentElement) {
+    if (getComputedStyle(child).position === 'fixed') break;
+    const outer = getComputedStyle(node);
+    const hidesX = outer.overflowX === 'hidden' || outer.overflowX === 'clip';
+    const hidesY = outer.overflowY === 'hidden' || outer.overflowY === 'clip';
+    if (!hidesX && !hidesY) continue;
+    const bounds = node.getBoundingClientRect();
+    if (
+      (hidesX && (box.right <= bounds.left || box.left >= bounds.right)) ||
+      (hidesY && (box.bottom <= bounds.top || box.top >= bounds.bottom))
+    ) {
+      return 'clipped out of sight by its container';
+    }
+  }
+
+  const hasText = Array.from(el.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+  if (hasText) {
+    if (parseFloat(style.fontSize) < 1) return 'text too small to see (font-size 0)';
+    // The colour behind the text: the nearest background colour, unless an image is in the way.
+    let background: string | null = 'rgb(255, 255, 255)';
+    for (let node: Element | null = el; node; node = node.parentElement) {
+      const s = getComputedStyle(node);
+      if (s.backgroundImage !== 'none') {
+        background = null;
+        break;
+      }
+      if (s.backgroundColor !== 'rgba(0, 0, 0, 0)' && s.backgroundColor !== 'transparent') {
+        background = s.backgroundColor;
+        break;
+      }
+    }
+    if (background && style.color.startsWith('rgb') && background.startsWith('rgb')) {
+      const [text, back] = [style.color, background].map((value) => (value.match(/[\d.]+/g) ?? []).map(Number));
+      const alpha = text![3] ?? 1;
+      if (alpha < 0.1) return 'transparent text';
+      const difference = [0, 1, 2].reduce((sum, i) => sum + Math.abs(text![i]! - back![i]!), 0);
+      if (difference < 10 && alpha >= 0.9 && (back![3] ?? 1) >= 0.9) return 'text the same colour as its background';
+    }
+  }
+  return null;
+}
+
+/** A short description of an element for messages: `a#next.btn "Next page"`. */
+export function describeElement(el: Element): string {
+  const classes = Array.from(el.classList).slice(0, 2).map((c) => `.${c}`).join('');
+  const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${classes}${text ? ` "${text}"` : ''}`;
+}
+
+/** The hrefs of links a person can see, and the URL they're relative to. Run with a honeypot check. */
+export function visibleLinks(_: null, isHoneypot: (el: Element) => string | null): { base: string; hrefs: string[] } {
+  const hrefs: string[] = [];
+  for (const link of Array.from(document.querySelectorAll('a[href]'))) {
+    const href = link.getAttribute('href');
+    if (href && !isHoneypot(link)) hrefs.push(href);
+  }
+  return { base: document.baseURI, hrefs };
+}
+
+export interface RawHoneypot {
+  element: string;
+  href: string | null;
+  reason: string;
+  box: { x: number; y: number; width: number; height: number };
+}
+
+/** Links, buttons and fields on the page that a person couldn't see. Run with a honeypot check. */
+export function listHoneypots(max: number, isHoneypot: (el: Element) => string | null): RawHoneypot[] {
+  const selector =
+    'a[href], button, input:not([type=hidden]), textarea, select, [role=button], [role=link], [role=checkbox], [onclick], [tabindex]:not([tabindex="-1"])';
+  const found: RawHoneypot[] = [];
+  for (const el of Array.from(document.querySelectorAll(selector))) {
+    if (found.length >= max) break;
+    const reason = isHoneypot(el);
+    if (!reason) continue;
+    const classes = Array.from(el.classList).slice(0, 2).map((c) => `.${c}`).join('');
+    const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    const name = el.getAttribute('name');
+    const rect = el.getBoundingClientRect();
+    found.push({
+      element: `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${classes}${name ? `[name=${name}]` : ''}${text ? ` "${text}"` : ''}`,
+      href: el.getAttribute('href'),
+      reason,
+      box: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+    });
+  }
+  return found;
 }

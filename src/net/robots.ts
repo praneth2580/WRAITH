@@ -1,4 +1,5 @@
 import robotsParserModule from 'robots-parser';
+import type { Fetcher } from './proxy.js';
 
 // robots-parser is CommonJS, but its types describe an ES module with a default export. Under
 // Node the default import is the function itself; accept either shape.
@@ -18,6 +19,7 @@ export class RobotsCache {
   constructor(
     private readonly userAgent: string | undefined,
     private readonly timeout: number,
+    private readonly fetcher: Fetcher,
   ) {}
 
   async isAllowed(url: string): Promise<boolean> {
@@ -48,7 +50,7 @@ export class RobotsCache {
   private async load(origin: string): Promise<Robots | null> {
     const robotsUrl = `${origin}/robots.txt`;
     try {
-      const response = await fetch(robotsUrl, {
+      const response = await this.fetcher.fetch(robotsUrl, {
         headers: this.userAgent ? { 'user-agent': this.userAgent } : {},
         signal: AbortSignal.timeout(this.timeout),
       });

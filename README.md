@@ -17,6 +17,8 @@ Web scraping and browser automation for Node.js, with human-like input you can t
 - **Waits that understand the page.** Clicks wait until a button is enabled and uncovered. `waitForSettled()` waits for requests, spinners and skeletons to finish.
 - **Robust to generated class names.** Find elements by role, label or text; read values next to their labels; pull JSON-LD, embedded app state, or the site's own API responses.
 - **Consent banners, pagination and hand-off.** Reject (or accept) cookie banners automatically, page through "Next", "Load more" and infinite scroll, and hand CAPTCHAs and one-time codes to a person.
+- **Proxies, user agents and parallel sessions.** HTTP, HTTPS and SOCKS5 proxies for browser pages and static fetches, user agents from your list or a built-in set of current browsers, and several independent browser sessions in one `Wraith`.
+- **Honeypot avoidance.** Optionally refuse links, buttons and form fields that are in the code but hidden from people, which sites plant to catch bots.
 - **Optional AI.** Extract into a zod schema, ask questions about a page, or give plain-language instructions ("log in with %user%"). Works with Ollama (local), Claude, OpenAI, and any OpenAI-compatible server such as LM Studio, vLLM or OpenRouter.
 
 It builds on existing libraries rather than reinventing them: [Playwright](https://playwright.dev), [cheerio](https://cheerio.js.org), [zod](https://zod.dev), [p-queue](https://github.com/sindresorhus/p-queue), [p-retry](https://github.com/sindresorhus/p-retry), [robots-parser](https://github.com/samclarke/robots-parser), [node-html-markdown](https://github.com/crosstype/node-html-markdown) and DuckDuckGo's [autoconsent](https://github.com/duckduckgo/autoconsent).
@@ -25,7 +27,7 @@ It builds on existing libraries rather than reinventing them: [Playwright](https
 
 - [Install](#install)
 - [Quick start](#quick-start)
-- Guides: [Human behaviour](#human-behaviour) · [Browser pages and static pages](#browser-pages-and-static-pages) · [Extracting with selectors](#extracting-with-selectors) · [Sites with generated class names](#sites-with-generated-class-names) · [Waiting](#waiting) · [Pagination](#pagination) · [Consent banners](#consent-banners) · [CAPTCHAs and verification codes](#captchas-and-verification-codes) · [Crawling](#crawling) · [AI](#ai) · [Network and politeness](#network-and-politeness) · [Browser options and sessions](#browser-options-and-sessions)
+- Guides: [Human behaviour](#human-behaviour) · [Browser pages and static pages](#browser-pages-and-static-pages) · [Extracting with selectors](#extracting-with-selectors) · [Sites with generated class names](#sites-with-generated-class-names) · [Waiting](#waiting) · [Pagination](#pagination) · [Consent banners](#consent-banners) · [CAPTCHAs and verification codes](#captchas-and-verification-codes) · [Crawling](#crawling) · [AI](#ai) · [Network and politeness](#network-and-politeness) · [Proxies and instances](#proxies-and-instances) · [User agents](#user-agents) · [Honeypots](#honeypots) · [Browser options and sessions](#browser-options-and-sessions)
 - [API reference](#api-reference): [createWraith options](#createwraith-options) · [Wraith class](#wraith-class) · [WraithPage](#wraithpage) · [StaticPage](#staticpage) · [Targets](#targets) · [Selector schemas](#selector-schemas) · [JsonCapture](#jsoncapture) · [AI options](#ai-options) · [Result types](#result-types) · [Errors](#errors) · [Other exports](#other-exports)
 - [Troubleshooting](#troubleshooting)
 - [Use responsibly](#use-responsibly) · [Changelog](#changelog) · [Development](#development) · [License](#license)
@@ -348,11 +350,75 @@ createWraith({
     retries: 2,                       // network errors, timeouts, 408/425/429/5xx; exponential backoff
     rateLimit: { concurrency: 2, maxRequests: 4, intervalMs: 1000 }, // per host; false to disable
     respectRobotsTxt: true,           // throws RobotsDisallowedError; honours Crawl-delay
-    userAgent: 'my-bot/1.0 (+https://example.com/bot)',
     headers: { 'accept-language': 'en' },
   },
+  userAgent: 'my-bot/1.0 (+https://example.com/bot)', // also matched against robots.txt
 });
 ```
+
+## Proxies and instances
+
+```ts
+// One proxy for everything: browser pages, static fetches and robots.txt.
+createWraith({ proxy: 'http://user:pass@proxy.example.com:8080' });   // or socks5://host:1080
+
+// Several proxies, one browser session (instance) per proxy, each with its own cookies.
+const wraith = createWraith({
+  proxy: ['http://p1.example.com:8000', 'http://p2.example.com:8000', 'socks5://p3.example.com:1080'],
+});
+const pages = await Promise.all(urls.map((url) => wraith.open(url)));   // spread across the 3 instances
+```
+
+A proxy is a URL, or `{ server, username, password, bypass }` (`bypass` lists hosts that go direct, such as `'localhost, .internal.example.com'`). With a list:
+
+- **Browser pages:** instance `i` uses proxy `i % proxies.length`. By default there's one instance per proxy.
+- **Static fetches** (and robots.txt) take the proxies in turn, one per request.
+
+**Instances** are independent browser sessions: separate cookies, storage, cache and proxy. Use them for parallel work or for several accounts at once:
+
+```ts
+const wraith = createWraith({ instances: 4 });                                  // contexts in one browser
+const isolated = createWraith({ instances: { count: 4, separateBrowsers: true } }); // a browser process each
+
+const page = await wraith.open(url);                    // goes to the instance with the fewest open pages
+const second = await wraith.open(url, { instance: 1 }); // or choose one
+page.instance;                                          // 0
+await wraith.saveSession('account-2.json', 1);          // per-instance sessions
+```
+
+The per-host rate limit is shared by all instances, so more instances (or proxies) don't mean more load on any one site. Browsers can't log in to SOCKS proxies, so use HTTP proxies for browser pages that need a password; SOCKS5 with a password works for static fetches (Node prints a one-time warning that undici's SOCKS5 support is experimental).
+
+## User agents
+
+```ts
+createWraith({ userAgent: 'my-bot/1.0 (+https://example.com/bot)' }); // one for everything
+createWraith({ userAgent: ['Mozilla/5.0 (…) Chrome/…', 'Mozilla/5.0 (…) Firefox/…'] });
+createWraith({ userAgent: 'rotate' });  // built-in: current Chrome, Edge, Firefox and Safari on Windows, macOS and Linux
+```
+
+- **Static fetches and robots.txt** take the user agents in turn. With proxies, each proxy keeps one user agent, so an address doesn't change browsers between requests. A `user-agent` header you pass yourself wins.
+- **Browser pages:** each instance gets one, like proxies (instance `i` takes agent `i % list.length`). With `'rotate'`, only agents of the engine you're running, such as Chrome for `chromium`.
+- `'rotate'` takes its version numbers from the browsers Playwright installs, so the list stays current when you update Playwright. `builtInUserAgents()` returns it.
+- A single string also names you in robots.txt matching. With a list or `'rotate'`, the `*` rules apply.
+
+Changing a browser page's user agent changes the `User-Agent` header and `navigator.userAgent`, not the browser underneath: `navigator.platform`, client hints and the rest still describe the real browser. A site that cross-checks them can tell.
+
+## Honeypots
+
+Some sites plant links, buttons and form fields that are in the page's code but hidden from people, so whatever uses them must be a bot: a link styled `display: none` that crawlers follow, an invisible button, a form field placed off-screen that only spam bots fill in. Using one can get you blocked. Turn on `avoidHoneypots` to stay clear of them:
+
+```ts
+const wraith = createWraith({ avoidHoneypots: true });
+const page = await wraith.open(url);
+
+await page.links();            // only links a person can see, so crawls don't follow traps
+await page.click('#offer');    // throws HoneypotError if a person couldn't see #offer
+await page.honeypots();        // [{ element: 'a.promo "Free gift"', reason: 'transparent (opacity 0)', href, box }, …]
+```
+
+An element counts as a honeypot when a person couldn't see or reach it: hidden (`display: none` or `visibility: hidden`, on it or a parent), transparent (opacity under 0.1, counting its parents), smaller than 2×2 px, positioned off the page, clipped away by its container, or text the same colour as its background. A form control hidden behind a visible label (a custom checkbox) is fine, because people click the label.
+
+With the option on, actions wait for their element to become visible as usual, then refuse it with `HoneypotError` if it's still a honeypot a second later (which lets fade-ins finish). `ai.act()` never sees honeypots. On static pages, `links()` leaves out links the markup hides (`hidden`, inline styles, and classes like `d-none` or `sr-only`); there's no CSS to compute without a browser, so that's a best guess. `page.honeypots()` works with the option off too, to see what a page has. Links hidden until a hover or click, such as dropdown menus, are left out as well; most sites link those pages visibly elsewhere.
 
 ## Browser options and sessions
 
@@ -364,7 +430,6 @@ createWraith({
     viewport: { width: 1366, height: 768 },
     locale: 'en-GB',
     timezoneId: 'Europe/London',
-    proxy: { server: 'http://proxy:8080' },
     storageState: 'session.json',    // reuse a saved login
   },
   blockResources: ['image', 'font', 'media'], // faster scraping
@@ -373,7 +438,7 @@ createWraith({
 await wraith.saveSession('session.json'); // cookies + localStorage
 ```
 
-One `Wraith` holds one browser and one context, so its pages share cookies. Create another `Wraith` for an isolated session. Anything wraith doesn't cover is available through Playwright: `page.raw` is the Playwright `Page`, and `wraith.context()` the `BrowserContext`.
+By default a `Wraith` runs one session, so its pages share cookies; use [instances](#proxies-and-instances) for isolated sessions. Anything wraith doesn't cover is available through Playwright: `page.raw` is the Playwright `Page`, and `wraith.context()` the `BrowserContext`.
 
 ## API reference
 
@@ -389,7 +454,11 @@ Everything below is exported from `wraithjs`. Times are in milliseconds.
 | `browser` | `'chromium' \| 'firefox' \| 'webkit'` | `'chromium'` | |
 | `headless` | `boolean` | `true` | `false` opens a visible window |
 | `launch` | Playwright `LaunchOptions` | | Passed to `browserType.launch()` |
-| `context` | Playwright `BrowserContextOptions` | | Viewport, user agent, locale, timezone, proxy, `storageState`… |
+| `context` | Playwright `BrowserContextOptions` | | Viewport, user agent, locale, timezone, `storageState`… |
+| `proxy` | `string \| ProxySettings \| (string \| ProxySettings)[]` | none | [Proxies and instances](#proxies-and-instances). For browser pages, static fetches and robots.txt |
+| `instances` | `number \| { count, separateBrowsers? }` | `1`, or one per proxy | Independent browser sessions; pages go to the least busy |
+| `userAgent` | `string \| string[] \| 'rotate'` | the browser's own | [User agents](#user-agents). Browser pages, static fetches and robots.txt |
+| `avoidHoneypots` | `boolean` | `false` | [Honeypots](#honeypots): refuse elements people can't see, skip hidden links |
 | `blockResources` | `('image' \| 'media' \| 'font' \| 'stylesheet')[]` | none | Don't download these in browser pages |
 | `network` | see below | | Timeouts, retries, rate limit, robots.txt |
 | `waits.afterAction` | `'navigation' \| 'settle' \| 'none'` | `'navigation'` | What clicks, key presses and selects wait for afterwards |
@@ -426,15 +495,16 @@ Everything below is exported from `wraithjs`. Times are in milliseconds.
 
 | Member | Returns | |
 | --- | --- | --- |
-| `open(url, { waitUntil?, timeout?, human? })` | `Promise<WraithPage>` | New tab, then `goto(url)` |
-| `newPage({ human? })` | `Promise<WraithPage>` | New blank tab; `human` overrides the setting for this page |
+| `open(url, { waitUntil?, timeout?, human?, instance? })` | `Promise<WraithPage>` | New tab, then `goto(url)` |
+| `newPage({ human?, instance? })` | `Promise<WraithPage>` | New blank tab, in the least busy instance unless `instance` says which; `human` overrides the setting for this page |
 | `fetch(url, { method?, headers?, body?, timeout? })` | `Promise<StaticPage>` | HTTP request without a browser |
 | `paginate(url, { next, maxPages = 10 })` | `AsyncGenerator<StaticPage>` | Follows Next links without a browser. `next` is a selector (its href is used), any [field spec](#selector-schemas) that yields a URL, or `(page) => url` |
 | `crawl(options)` | `Promise<CrawlResult>` | See below |
-| `saveSession(path)` | `Promise<void>` | Saves cookies and localStorage; load with `context: { storageState: path }` |
-| `context()` | `Promise<BrowserContext>` | The Playwright context, launching the browser if needed |
+| `saveSession(path, instance = 0)` | `Promise<void>` | Saves an instance's cookies and localStorage; load with `context: { storageState: path }` |
+| `context(instance = 0)` | `Promise<BrowserContext>` | An instance's Playwright context, launching the browser if needed |
+| `instanceCount` | `number` | How many instances this `Wraith` runs |
 | `ai` | `AIClient` | `ai.extract(content, schema, { instruction? })`, `ai.ask(question, content?)`. Needs `ai` |
-| `close()` | `Promise<void>` | Closes the browser. Static fetches still work; a new browser page relaunches it |
+| `close()` | `Promise<void>` | Closes every browser and session. Static fetches still work; a new browser page relaunches |
 
 `crawl()` options:
 
@@ -502,7 +572,8 @@ A target is a selector, a Playwright `Locator`, or a [TargetQuery](#targets). Ac
 | `text(selector?)` | `Promise<string>` | Visible text with whitespace collapsed. Throws if `selector` matches nothing |
 | `markdown(selector?)` | `Promise<string>` | Clean Markdown, with absolute links |
 | `html(selector?)` | `Promise<string>` | The page, or the outer HTML of the first match |
-| `links()` | `Promise<string[]>` | Every http(s) link, absolute and de-duplicated |
+| `links()` | `Promise<string[]>` | Every http(s) link, absolute and de-duplicated. With `avoidHoneypots`, only visible ones |
+| `honeypots()` | `Promise<Honeypot[]>` | Links, buttons and fields a person couldn't see, with the reason for each |
 | `screenshot(options?)` | `Promise<Buffer>` | Playwright screenshot options, such as `{ fullPage: true }` |
 
 **Consent, challenges and AI**
@@ -516,6 +587,7 @@ A target is a selector, a Playwright `Locator`, or a [TargetQuery](#targets). Ac
 | `ai.extract(schema, { instruction?, selector? })` | `Promise<z.infer<S>>` | Needs the `ai` option |
 | `ai.ask(question, { selector? })` | `Promise<string>` | |
 | `ai.act(instruction, { maxSteps = 5, variables?, timeout = 10000 })` | `Promise<ActResult>` | Browser pages only |
+| `instance` | `number` | Which instance the page belongs to, from 0 |
 | `raw` | Playwright `Page` | For anything not covered here |
 | `human` | `Humanizer` | The page's input driver: `human.click(locator)`, `human.moveTo({ x, y })`… |
 
@@ -618,12 +690,14 @@ Every error wraith throws extends `WraithError`.
 | `ChallengeError` | A challenge couldn't be handed to anyone, or wasn't dealt with in time |
 | `AIError` | A provider failed, refused, or replied outside the schema |
 | `MissingDependencyError` | An optional package, such as `@anthropic-ai/sdk`, isn't installed. Has `packageName` |
+| `HoneypotError` | With `avoidHoneypots`, an action's element is one a person couldn't see. Has `reason` and `element` |
 
 Playwright's own errors, such as its `TimeoutError` when an element never appears, pass through unchanged.
 
 ### Other exports
 
 - `z`: the zod instance wraith uses.
+- `builtInUserAgents(engine?)`: the user agents `'rotate'` uses.
 - `waitUntil(condition, options)`: the standalone polling helper. `DEFAULT_LOADERS` lists the built-in loader selectors.
 - `htmlToMarkdown(html, { selector?, baseUrl? })`, `htmlToText(html, selector?)`, `extractHtml(html, schema, baseUrl?)`, `jsonLdOfType(data, type)`.
 - `humanPresets`, `Humanizer`, `humanPath`, `pointInBox`, `createRng`, `sleep`: the human-behaviour building blocks.
@@ -654,7 +728,7 @@ Set `WRAITH_DEBUG=1` (or `logger: true`) to see retries, robots.txt decisions, c
 
 ## Use responsibly
 
-Check a site's terms before you scrape it, keep the rate limit on, and consider `respectRobotsTxt: true`. Human-like input is for making automation behave naturally. It doesn't give you permission to access anything, and wraith deliberately doesn't solve CAPTCHAs.
+Check a site's terms before you scrape it, keep the rate limit on, and consider `respectRobotsTxt: true`. Human-like input, proxies and user agents make automation behave naturally and keep it reliable. They don't give you permission to access anything, and wraith deliberately doesn't solve CAPTCHAs. The rate limit applies per site whatever proxies or user agents you use.
 
 ## Changelog
 
@@ -670,6 +744,9 @@ First public beta:
 - CAPTCHA and one-time-code detection, with hand-off to a person.
 - AI extraction, questions and plain-language actions with Anthropic, OpenAI-compatible servers, Ollama, or your own provider.
 - Per-host rate limiting, retries with backoff, and optional robots.txt checks.
+- Proxies (HTTP, HTTPS, SOCKS5) for browser pages and static fetches, rotated from a list, and several independent instances (browser sessions) per `Wraith`.
+- User agents from a list or a built-in set of current browsers, one per instance and per proxy.
+- `avoidHoneypots`: refuse elements hidden from people, keep hidden links out of `links()` and crawls, and `page.honeypots()` to list them.
 
 ## Development
 

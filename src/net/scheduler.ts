@@ -3,6 +3,7 @@ import pRetry from 'p-retry';
 import type { ResolvedNetwork } from '../config.js';
 import { HttpError, RobotsDisallowedError, WraithError } from '../errors.js';
 import type { Logger } from '../logger.js';
+import { createFetcher, type Fetcher } from './proxy.js';
 import { RobotsCache } from './robots.js';
 
 const RETRYABLE_STATUS = new Set([408, 425, 429]);
@@ -27,8 +28,9 @@ export class Scheduler {
   constructor(
     private readonly network: ResolvedNetwork,
     private readonly logger: Logger,
+    fetcher: Fetcher = createFetcher([]),
   ) {
-    this.robots = network.respectRobotsTxt ? new RobotsCache(network.userAgent, network.timeout) : undefined;
+    this.robots = network.respectRobotsTxt ? new RobotsCache(network.userAgent, network.timeout, fetcher) : undefined;
   }
 
   async run<T>(url: string, task: () => Promise<T>): Promise<T> {

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AIError } from '../errors.js';
 import type { Humanizer } from '../human/humanizer.js';
 import { ContentAI, type AIClient, type PageContent } from './client.js';
+import { withHoneypotCheck } from '../honeypots.js';
 import { collectElements, type RawElement } from '../in-page.js';
 import type { ActionWatch } from '../wait.js';
 
@@ -99,14 +100,16 @@ function describeStep(step: ActStep, index: number): string {
   return `${index + 1}. ${step.action}${step.element ? ` ${step.element}` : ''}${value} (${step.reason})${outcome}`;
 }
 
-async function snapshot(page: Page): Promise<RawElement[]> {
+async function snapshot(page: Page, avoidHoneypots: boolean): Promise<RawElement[]> {
+  // With avoidHoneypots the model never sees elements a person couldn't, so it can't pick them.
+  const collect = () => (avoidHoneypots ? page.evaluate(withHoneypotCheck(collectElements), 300) : page.evaluate(collectElements, 300));
   let raw: RawElement[];
   try {
-    raw = await page.evaluate(collectElements, 300);
+    raw = await collect();
   } catch {
     // Most likely the page was navigating. Wait for it, then try once more.
     await page.waitForLoadState('domcontentloaded').catch(() => {});
-    raw = await page.evaluate(collectElements, 300);
+    raw = await collect();
   }
   return raw.map(tidyElement);
 }
@@ -159,6 +162,7 @@ export class PageAI extends ContentAI {
     private readonly human: Humanizer,
     /** Starts watching before an action; awaiting done() waits for what it set off. */
     private readonly watch: () => ActionWatch,
+    private readonly avoidHoneypots = false,
   ) {
     super(client, read);
   }
@@ -174,7 +178,7 @@ export class PageAI extends ContentAI {
     const variableNames = Object.keys(variables);
 
     for (let i = 0; i < maxSteps; i++) {
-      const elements = await snapshot(this.page);
+      const elements = await snapshot(this.page, this.avoidHoneypots);
       const prompt = [
         `Instruction: ${instruction}`,
         variableNames.length > 0 && `Variables available for value: ${variableNames.map((n) => `%${n}%`).join(', ')}`,

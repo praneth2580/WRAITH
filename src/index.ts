@@ -7,7 +7,11 @@ export type {
   ResourceType,
   DeepPartial,
   WaitOptions,
+  InstanceOptions,
 } from './config.js';
+export type { ProxyOption, ProxySettings } from './net/proxy.js';
+export { builtInUserAgents, type UserAgentOption } from './net/user-agents.js';
+export type { RawHoneypot as Honeypot } from './in-page.js';
 export {
   WraithPage,
   type GotoOptions,
@@ -67,6 +71,7 @@ export {
   MissingDependencyError,
   WaitTimeoutError,
   ChallengeError,
+  HoneypotError,
 } from './errors.js';
 export { consoleLogger, silentLogger, type Logger } from './logger.js';
 

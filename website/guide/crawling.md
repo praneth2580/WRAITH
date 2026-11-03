@@ -61,7 +61,7 @@ await wraith.crawl({
 
 ## Speed and politeness
 
-`concurrency` (default 3) is how many pages are processed at once. The per-host [rate limit](/guide/network) still applies on top, so by default a crawl of one site loads at most 4 pages per second, however high you set `concurrency`. Turn on `respectRobotsTxt` for crawls of sites you don't own:
+`concurrency` (default 3) is how many pages are processed at once. In browser mode, pages spread across the Wraith's [instances](/guide/proxies#instances), so with `instances: 3` (or three proxies) each page of a batch gets its own session. The per-host [rate limit](/guide/network) still applies on top, so by default a crawl of one site loads at most 4 pages per second, however high you set `concurrency`. Turn on `respectRobotsTxt` for crawls of sites you don't own, and consider [`avoidHoneypots`](/guide/honeypots), which keeps hidden trap links out of the crawl:
 
 ```ts
 import { createWraith } from 'wraithjs';

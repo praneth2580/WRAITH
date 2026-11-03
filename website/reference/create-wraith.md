@@ -26,7 +26,11 @@ const wraith = createWraith({
 | `browser` | `'chromium' \| 'firefox' \| 'webkit'` | `'chromium'` | Browser engine |
 | `headless` | `boolean` | `true` | `false` opens a visible window |
 | `launch` | Playwright `LaunchOptions` | | Passed to `browserType.launch()`: `channel`, `slowMo`, `args`, `executablePath`… |
-| `context` | Playwright `BrowserContextOptions` | | Passed to `browser.newContext()`: viewport, user agent, locale, timezone, proxy, `storageState`… |
+| `context` | Playwright `BrowserContextOptions` | | Passed to `browser.newContext()` for every instance: viewport, user agent, locale, timezone, `storageState`… |
+| `proxy` | `ProxyOption` | none | Proxy for browser pages, static fetches and robots.txt. See [below](#proxy) |
+| `instances` | `number \| InstanceOptions` | `1`, or one per proxy | Independent browser sessions. See [below](#instances) |
+| `userAgent` | `string \| string[] \| 'rotate'` | the browser's own | User agent for browser pages, static fetches and robots.txt. See [below](#useragent) |
+| `avoidHoneypots` | `boolean` | `false` | Refuse elements people can't see, and skip hidden links. See [below](#avoidhoneypots) |
 | `blockResources` | `('image' \| 'media' \| 'font' \| 'stylesheet')[]` | `[]` | Resource types browser pages don't download |
 | `network` | `NetworkOptions` | | [Below](#network) |
 | `waits` | `WaitOptions` | | [Below](#waits) |
@@ -93,6 +97,46 @@ Each preset's values are listed in the [Human behaviour guide](/guide/human-beha
 | `settle.timeout` | `number` | `15000` | `waitForSettled()` gives up and returns `false` |
 
 [Guide](/guide/waiting)
+
+## proxy
+
+```ts sig
+type ProxyOption = string | ProxySettings | (string | ProxySettings)[];
+
+interface ProxySettings {
+  server: string;      // 'http://host:port', 'https://host:port', 'socks5://host:port', or 'host:port'
+  username?: string;
+  password?: string;
+  bypass?: string;     // comma-separated hosts that go direct: 'localhost, .internal.example.com'
+}
+```
+
+A string can carry a login: `'http://user:pass@host:8080'`. With a list, instance `i` uses proxy `i % list.length`, and static fetches and robots.txt requests take the proxies in turn. Browsers can't log in to SOCKS proxies, so a browser instance with a SOCKS5 proxy and a password throws `WraithError`. Can't be combined with `context.proxy`. [Guide](/guide/proxies)
+
+## instances
+
+```ts sig
+type Instances = number | InstanceOptions;
+
+interface InstanceOptions {
+  count: number;
+  separateBrowsers?: boolean;   // a browser process per instance; default false (contexts in one browser)
+}
+```
+
+Each instance has its own cookies, storage, cache and proxy, and is created on first use. Pages go to the instance with the fewest open pages unless `newPage()` or `open()` is given `instance`. Default: one instance, or one per proxy when `proxy` is a list. [Guide](/guide/proxies#instances)
+
+## userAgent
+
+```ts sig
+type UserAgentOption = 'rotate' | string | readonly string[];
+```
+
+A string is used everywhere, and also names you in robots.txt matching. With a list, instance `i` gets agent `i % list.length`, and static fetches take them in turn (keeping one per proxy when there are proxies). `'rotate'` uses `builtInUserAgents()`: current Chrome, Edge, Firefox and Safari desktop agents, with versions from the browsers Playwright installs, limited to the running engine for browser pages. Can't be combined with `context.userAgent` or `network.userAgent`. [Guide](/guide/proxies#user-agents)
+
+## avoidHoneypots
+
+With `true`, actions refuse elements a person couldn't see (hidden, transparent, off the page, smaller than 2×2 px, clipped away, or camouflaged) by throwing `HoneypotError`, once the element has had a second to become visible. `links()` leaves hidden links out, so crawls don't follow them, and `ai.act()` never sees hidden elements. [Guide](/guide/honeypots)
 
 ## handoff
 

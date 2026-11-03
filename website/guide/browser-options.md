@@ -60,15 +60,13 @@ const wraith = createWraith({ context: { ...devices['Pixel 7'] } });
 
 ## Proxies
 
+Use the top-level `proxy` option rather than `context.proxy`: it covers static fetches and robots.txt as well as browser pages, and accepts a list. See [Proxies and instances](/guide/proxies).
+
 ```ts
 import { createWraith } from 'wraithjs';
 
-const wraith = createWraith({
-  context: { proxy: { server: 'http://proxy.example.com:8080', username: 'user', password: 'pass' } },
-});
+const wraith = createWraith({ proxy: 'http://user:pass@proxy.example.com:8080' });
 ```
-
-This proxies browser pages. Static `fetch()` uses Node's built-in fetch, which doesn't go through it.
 
 ## Sessions
 
@@ -88,11 +86,11 @@ const later = createWraith({ context: { storageState: 'session.json' } });
 
 `session.json` contains login cookies: keep it out of version control.
 
-All pages from one `Wraith` share one browser context, so they share cookies. For separate sessions side by side (two accounts, say), create two `Wraith`s.
+By default, all pages from one `Wraith` share one session, so they share cookies. For separate sessions side by side (two accounts, say), use [instances](/guide/proxies#instances), and save each with `saveSession(path, instance)`.
 
 ## Going lower level
 
 - `page.raw` is the Playwright `Page`: `page.raw.route()`, `page.raw.on('dialog', …)`, `page.raw.pdf()`…
-- `await wraith.context()` is the Playwright `BrowserContext`, launching the browser if needed: `addCookies()`, `grantPermissions()`, `tracing.start()`…
+- `await wraith.context(instance?)` is an instance's Playwright `BrowserContext`, launching the browser if needed: `addCookies()`, `grantPermissions()`, `tracing.start()`…
 
 Actions you take through Playwright directly aren't humanized.

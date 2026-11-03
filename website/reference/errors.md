@@ -23,6 +23,7 @@ try {
 | `ChallengeError` | A challenge couldn't be handed to anyone, wasn't dealt with in time, or the answer had nowhere to go | |
 | `AIError` | A provider failed, refused, replied outside the schema, or the content was over `maxInputChars` | |
 | `MissingDependencyError` | An optional package, such as `@anthropic-ai/sdk`, isn't installed | `packageName` |
+| `HoneypotError` | With `avoidHoneypots`, an action's element is one a person couldn't see | `reason`, `element` |
 
 Errors from Playwright pass through unchanged. The common one is its `TimeoutError`, when an element never becomes ready within the timeout. Its message names the step that timed out.
 

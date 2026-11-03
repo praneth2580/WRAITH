@@ -2,6 +2,8 @@
 
 A browser tab, from `wraith.open()` or `wraith.newPage()`. Input goes through the page's human behaviour. Methods that take a `target` accept a selector, a Playwright `Locator` or a [TargetQuery](/reference/targets), and wait for it to be [ready](/guide/targets#what-ready-means) for up to `network.timeout` unless you pass `timeout`.
 
+With [`avoidHoneypots`](/reference/create-wraith#avoidhoneypots), actions on a target a person couldn't see throw `HoneypotError` instead.
+
 ## Navigation
 
 ### goto()
@@ -156,7 +158,8 @@ Give exactly one of `next`, `loadMore` or `scroll`. Yields 1, 2, 3… as each pa
 | `text(selector?)` | `Promise<string>` | Visible text, whitespace collapsed; several matches are joined with spaces. Throws `WraithError` if `selector` matches nothing |
 | `markdown(selector?)` | `Promise<string>` | Clean Markdown with absolute links |
 | `html(selector?)` | `Promise<string>` | The page's HTML, or the first match's outer HTML |
-| `links()` | `Promise<string[]>` | Every http(s) link: absolute, no fragments, de-duplicated, in page order |
+| `links()` | `Promise<string[]>` | Every http(s) link: absolute, no fragments, de-duplicated, in page order. With `avoidHoneypots`, only links a person can see |
+| `honeypots()` | `Promise<Honeypot[]>` | Links, buttons and fields a person couldn't see: `{ element, href, reason, box }` each. Works with the option off too. [Guide](/guide/honeypots) |
 | `screenshot(options?)` | `Promise<Buffer>` | Playwright's screenshot options, such as `{ fullPage: true, path: 'page.png' }` |
 
 ## Consent
@@ -189,9 +192,10 @@ Both throw `WraithError` if the `consent` option isn't set. [Guide](/guide/conse
 
 [Guide](/guide/ai)
 
-## Escape hatches
+## Properties
 
 | Property | Type | |
 | --- | --- | --- |
+| `instance` | `number` | Which of the Wraith's [instances](/guide/proxies#instances) this page is in, from 0 |
 | `raw` | Playwright `Page` | Everything Playwright offers. Input through `raw` isn't humanized |
 | `human` | `Humanizer` | The page's input driver: `click(locator)`, `type(locator, text)`, `moveTo({ x, y })`, `scrollBy(dy)`, `fidget()`, `pause()` |

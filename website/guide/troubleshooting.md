@@ -67,6 +67,18 @@ The page never went quiet within the timeout: it polls, animates or streams. Thi
 
 The site is rate limiting you, and the retries didn't help. Slow down: `network: { rateLimit: { concurrency: 1, maxRequests: 1, intervalMs: 3000 } }`.
 
+### "Browsers can't log in to SOCKS proxies"
+
+A browser instance was given a SOCKS5 proxy with a username and password, which browsers don't support. Use an HTTP proxy with that login for browser pages. The SOCKS proxy still works for static fetches.
+
+### Pages fail with `net::ERR_PROXY_CONNECTION_FAILED` or HTTP 407
+
+The proxy is unreachable, or rejected the login (407 Proxy Authentication Required). Check the host, port and credentials, and encode special characters in a URL login (`p%40ss` for `p@ss`), or pass `username` and `password` separately.
+
+### `HoneypotError`
+
+`avoidHoneypots` is on, and the element is one a person couldn't see; the message says why (transparent, off the page, clipped…). If it's content that appears after a hover, click or scroll, do that first. If it's legitimate and always hidden, turn the option off for that page's work. `page.honeypots()` lists what the page has.
+
 ### `RobotsDisallowedError`
 
 `respectRobotsTxt` is on and the site's robots.txt disallows that URL for your user agent. Respect it, or ask the site's owner.

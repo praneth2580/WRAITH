@@ -6,6 +6,8 @@ import type { Range } from './human/random.js';
 import type { ConsentChoice } from './consent.js';
 import type { HandoffOptions } from './handoff.js';
 import type { Logger } from './logger.js';
+import type { ProxyOption, ProxySettings } from './net/proxy.js';
+import type { UserAgentOption } from './net/user-agents.js';
 import type { AfterAction, SettleOptions } from './wait.js';
 
 export type DeepPartial<T> = {
@@ -76,6 +78,53 @@ export interface WraithOptions {
   consent?: false | ConsentChoice;
   /** Handing CAPTCHAs and one-time-code prompts to a person. */
   handoff?: HandoffOptions;
+  /**
+   * Send traffic through a proxy: a URL such as `'http://user:pass@proxy.example.com:8080'` or
+   * `'socks5://127.0.0.1:1080'`, `{ server, username, password, bypass }`, or a list of them.
+   * With a list, each instance uses the next proxy in turn, and static fetches rotate through all
+   * of them. Applies to browser pages, static fetches and robots.txt.
+   */
+  proxy?: ProxyOption;
+  /**
+   * Run several independent browser sessions, each with its own cookies, storage and proxy. New
+   * pages go to the least busy one. A number, or `{ count, separateBrowsers }`. Default 1, or one
+   * per proxy when `proxy` is a list.
+   */
+  instances?: number | InstanceOptions;
+  /**
+   * The user agent to present: a string; a list, where each browser instance takes the next one
+   * and static fetches take them in turn (one per proxy, when there are proxies); or `'rotate'`
+   * for a built-in list of current desktop browsers, matched to the engine for browser pages.
+   */
+  userAgent?: UserAgentOption;
+  /**
+   * Stay clear of honeypots: links, buttons and fields that are in the page's code but hidden from
+   * people, so that only bots use them. Actions on such elements throw `HoneypotError`, `links()`
+   * (and so crawls) leaves them out, and `ai.act()` never sees them. Default false.
+   */
+  avoidHoneypots?: boolean;
+}
+
+export interface InstanceOptions {
+  /** How many sessions. */
+  count: number;
+  /**
+   * Give each instance its own browser process instead of a context in a shared one. Uses more
+   * memory, but a browser crash only takes down one instance. Default false.
+   */
+  separateBrowsers?: boolean;
+}
+
+export interface ResolvedInstances {
+  count: number;
+  separateBrowsers: boolean;
+}
+
+export function resolveInstances(option: number | InstanceOptions | undefined, proxies: readonly ProxySettings[]): ResolvedInstances {
+  const given = typeof option === 'number' ? { count: option } : option;
+  const count = given?.count ?? Math.max(1, proxies.length);
+  if (!Number.isInteger(count) || count < 1) throw new WraithError('instances must be a whole number >= 1');
+  return { count, separateBrowsers: given?.separateBrowsers ?? false };
 }
 
 export interface WaitOptions {

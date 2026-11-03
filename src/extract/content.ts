@@ -1,6 +1,7 @@
 import { load, type CheerioAPI } from 'cheerio';
 import { NodeHtmlMarkdown } from 'node-html-markdown';
 import { WraithError } from '../errors.js';
+import { looksHidden } from '../honeypots.js';
 
 /** Elements that never carry readable content. */
 const NOISE = [
@@ -67,21 +68,32 @@ export function htmlToText(html: string, selector?: string): string {
     .trim();
 }
 
-/** Every http(s) link on the page: absolute, without #fragments, de-duplicated, in page order. */
-export function extractLinks($: CheerioAPI, baseUrl: string): string[] {
-  const links = new Set<string>();
+/**
+ * Every http(s) link on the page: absolute, without #fragments, de-duplicated, in page order.
+ * With `skipHidden`, links the markup hides (a best guess without CSS) are left out.
+ */
+export function extractLinks($: CheerioAPI, baseUrl: string, options: { skipHidden?: boolean } = {}): string[] {
+  const hrefs: string[] = [];
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
-    if (!href) return;
+    if (href && !(options.skipHidden && looksHidden(el))) hrefs.push(href);
+  });
+  return normalizeLinks(hrefs, baseUrl);
+}
+
+/** Makes hrefs absolute, keeps http(s) ones, drops #fragments and duplicates. */
+export function normalizeLinks(hrefs: readonly string[], baseUrl: string): string[] {
+  const links = new Set<string>();
+  for (const href of hrefs) {
     try {
       const url = new URL(href, baseUrl);
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
       url.hash = '';
       links.add(url.href);
     } catch {
       // Malformed href; skip it.
     }
-  });
+  }
   return [...links];
 }
 

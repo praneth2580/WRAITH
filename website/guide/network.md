@@ -48,15 +48,28 @@ If robots.txt has a `Crawl-delay`, it replaces the rate limit for that host: one
 
 ## Headers and user agent
 
-`userAgent` and `headers` apply to static fetches and robots.txt. Browser pages send the browser's own headers; to change those, use the [context options](/guide/browser-options):
+The top-level `userAgent` option sets the user agent everywhere: browser pages, static fetches and robots.txt. It can also rotate through a list; see [User agents](/guide/proxies#user-agents). `network.headers` adds headers to static fetches; for browser pages, use `context.extraHTTPHeaders`:
 
 ```ts
 import { createWraith } from 'wraithjs';
 
 const wraith = createWraith({
-  network: { userAgent: 'my-bot/1.0' },                       // fetch() and robots.txt
-  context: { userAgent: 'my-bot/1.0', extraHTTPHeaders: { 'accept-language': 'en' } },  // browser pages
+  userAgent: 'my-bot/1.0 (+https://example.com/bot)',
+  network: { headers: { 'accept-language': 'en' } },          // static fetches
+  context: { extraHTTPHeaders: { 'accept-language': 'en' } },  // browser pages
 });
+```
+
+`network.userAgent` still works, for static fetches and robots.txt only.
+
+## Proxies
+
+`proxy` sends page loads, static fetches and robots.txt requests through one or more proxy servers. With a list, each browser instance gets its own proxy and static fetches take turns. See [Proxies and instances](/guide/proxies).
+
+```ts
+import { createWraith } from 'wraithjs';
+
+const wraith = createWraith({ proxy: ['http://p1.example.com:8000', 'socks5://p2.example.com:1080'] });
 ```
 
 ## Blocking heavy resources

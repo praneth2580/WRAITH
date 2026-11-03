@@ -14,7 +14,7 @@ Then open **http://127.0.0.1:4477**. Set `PORT` to use another port: `PORT=4478 
 
 ## The layout
 
-**Left: Browser and Action.** The Browser panel sets the engine, human preset, after-action wait, consent choice and blocked resources; any other option goes in as JSON (for example `{ "ai": { "provider": "ollama", "model": "qwen2.5:7b" } }`). Untick **Headless** to watch the real window. The Action panel runs one of 37 actions: every page method, plus `fetch` without a browser and `evaluate` for your own JavaScript.
+**Left: Browser and Action.** The Browser panel sets the engine, human preset, after-action wait, consent choice and blocked resources; any other option goes in as JSON (for example `{ "ai": { "provider": "ollama", "model": "qwen2.5:7b" } }`). Untick **Headless** to watch the real window. The Action panel runs one of 38 actions: every page method, plus `fetch` without a browser and `evaluate` for your own JavaScript.
 
 Targets are typed as a selector or as JSON: `{"role": "button", "name": "Sign in"}`, `{"label": "Email"}`, `{"text": "/next/i"}` (slashes make a RegExp).
 
@@ -40,6 +40,7 @@ Targets are typed as a selector or as JSON: `{"role": "button", "name": "Sign in
 ## Diagnosing
 
 - **A click doesn't work:** run **inspect** with the same target. It outlines every match on the screenshot, marks the one wraith uses, and says whether it's hidden, disabled, off screen or covered (and by what).
+- **Possible bot traps:** run **honeypots**. It outlines, in red, the links, buttons and fields a person couldn't see, with the reason for each.
 - **A page never settles:** run **activity** or **waitForSettled**. They list requests in flight, visible loaders, and when the content last changed.
 - **Classes are generated:** run an action that loads data, open **Network**, and look for JSON responses. Then try **captureJson** with that URL, and **structuredData**.
 

@@ -4,14 +4,15 @@ import { PageAI } from './ai/act.js';
 import type { AIClient } from './ai/client.js';
 import { JsonCapture, type ResponseMatcher } from './capture.js';
 import type { ConsentManager, ConsentStatus } from './consent.js';
-import { HttpError, WraithError } from './errors.js';
-import { extractLinks, htmlToMarkdown, htmlToText } from './extract/content.js';
+import { HoneypotError, HttpError, WraithError } from './errors.js';
+import { extractLinks, htmlToMarkdown, htmlToText, normalizeLinks } from './extract/content.js';
 import { documentBaseUrl, extractWithSchema, type InferSchema, type SelectorSchema } from './extract/schema.js';
 import { APP_STATE_GLOBALS, structuredDataFromHtml, type StructuredData } from './extract/structured.js';
 import { captureChallenge, findChallenge, runHandoff, type Challenge, type HandoffOptions, type ResolvedHandoff } from './handoff.js';
 import { Humanizer, type ClickOptions, type TypeOptions } from './human/humanizer.js';
 import { sleep, type Range } from './human/random.js';
-import { readAppState } from './in-page.js';
+import { withHoneypotCheck } from './honeypots.js';
+import { describeElement, honeypotReason, listHoneypots, readAppState, visibleLinks, type RawHoneypot } from './in-page.js';
 import { isRetryableStatus, type Scheduler } from './net/scheduler.js';
 import { paginate, type PaginateOptions } from './paginate.js';
 import { resolveTarget, type Target } from './target.js';
@@ -67,6 +68,9 @@ export interface PageServices {
   headless: boolean;
   consent: ConsentManager | undefined;
   ai: AIClient | undefined;
+  /** Which of the Wraith's instances the page belongs to. */
+  instance: number;
+  avoidHoneypots: boolean;
 }
 
 /**
@@ -84,6 +88,11 @@ export class WraithPage {
     private readonly services: PageServices,
   ) {
     this.human = services.human;
+  }
+
+  /** Which of the Wraith's instances (independent sessions) this page belongs to, from 0. */
+  get instance(): number {
+    return this.services.instance;
   }
 
   url(): string {
@@ -116,41 +125,41 @@ export class WraithPage {
 
   /** Clicks once the target is visible, enabled, still and uncovered, then waits as `waits.afterAction` says. */
   click(target: Target, options?: ClickOptions): Promise<void> {
-    return this.perform(() => this.human.click(this.locate(target), options));
+    return this.perform(async () => this.human.click(await this.ready(target, options?.timeout), options));
   }
 
   dblclick(target: Target, options?: Omit<ClickOptions, 'clickCount'>): Promise<void> {
-    return this.perform(() => this.human.click(this.locate(target), { ...options, clickCount: 2 }));
+    return this.perform(async () => this.human.click(await this.ready(target, options?.timeout), { ...options, clickCount: 2 }));
   }
 
-  hover(target: Target, options?: { timeout?: number }): Promise<void> {
-    return this.human.hover(this.locate(target), options);
+  async hover(target: Target, options?: { timeout?: number }): Promise<void> {
+    await this.human.hover(await this.ready(target, options?.timeout), options);
   }
 
   /** Types into a field key by key. Replaces the current value unless `clear: false`. */
-  type(target: Target, text: string, options?: TypeOptions): Promise<void> {
-    return this.human.type(this.locate(target), text, options);
+  async type(target: Target, text: string, options?: TypeOptions): Promise<void> {
+    await this.human.type(await this.ready(target, options?.timeout), text, options);
   }
 
   /** Sets a field's value instantly, with no typing. For when speed matters more than looking human. */
-  fill(target: Target, value: string, options?: { timeout?: number }): Promise<void> {
-    return this.locate(target).fill(value, options);
+  async fill(target: Target, value: string, options?: { timeout?: number }): Promise<void> {
+    await (await this.ready(target, options?.timeout)).fill(value, options);
   }
 
   /** Presses a key or chord ("Enter", "ControlOrMeta+A"), on `target` if given, else on whatever has focus. */
   async press(key: string, options: { target?: Target; timeout?: number } = {}): Promise<void> {
-    if (options.target) await this.locate(options.target).focus({ timeout: options.timeout });
+    if (options.target) await (await this.ready(options.target, options.timeout)).focus({ timeout: options.timeout });
     await this.perform(() => this.human.press(key));
   }
 
   /** Chooses options in a <select> by value or visible label. */
   select(target: Target, values: string | string[], options?: { timeout?: number }): Promise<void> {
-    return this.perform(() => this.human.select(this.locate(target), values, options));
+    return this.perform(async () => this.human.select(await this.ready(target, options?.timeout), values, options));
   }
 
   /** Ticks (or with `checked: false`, unticks) a checkbox or radio, clicking only if it needs to change. */
   async check(target: Target, checked = true, options?: { timeout?: number }): Promise<void> {
-    const locator = this.locate(target);
+    const locator = await this.ready(target, options?.timeout);
     if ((await locator.isChecked(options)) !== checked) await this.perform(() => this.human.click(locator, options));
   }
 
@@ -330,14 +339,30 @@ export class WraithPage {
     return htmlToMarkdown(html, { selector, baseUrl: documentBaseUrl(load(html), this.raw.url()) });
   }
 
-  /** Every http(s) link on the page, absolute and de-duplicated. */
+  /**
+   * Every http(s) link on the page, absolute and de-duplicated. With `avoidHoneypots`, only links
+   * a person can see.
+   */
   async links(): Promise<string[]> {
+    if (this.services.avoidHoneypots) {
+      const { base, hrefs } = await this.raw.evaluate(withHoneypotCheck(visibleLinks), null);
+      return normalizeLinks(hrefs, base || this.raw.url());
+    }
     const $ = load(await this.raw.content());
     return extractLinks($, documentBaseUrl($, this.raw.url()) ?? this.raw.url());
   }
 
   screenshot(options?: Parameters<Page['screenshot']>[0]): Promise<Buffer> {
     return this.raw.screenshot(options);
+  }
+
+  /**
+   * Links, buttons and fields on the page that a person couldn't see or reach (hidden, transparent,
+   * off the page, too small, clipped away, or camouflaged), with the reason for each. These are
+   * what `avoidHoneypots` steers clear of. Works whether or not that option is on.
+   */
+  async honeypots(): Promise<RawHoneypot[]> {
+    return this.raw.evaluate(withHoneypotCheck(listHoneypots), 200);
   }
 
   // ---- Consent banners -------------------------------------------------------------------
@@ -409,6 +434,7 @@ export class WraithPage {
       this.human,
       // act() always needs page loads finished before it looks again, even with afterAction 'none'.
       () => this.watchWithHandoff(this.services.afterAction === 'none' ? 'navigation' : this.services.afterAction),
+      this.services.avoidHoneypots,
     );
     return this.aiHelper;
   }
@@ -421,6 +447,32 @@ export class WraithPage {
 
   private locate(target: Target): Locator {
     return resolveTarget(this.raw, target);
+  }
+
+  /**
+   * The target's locator. With `avoidHoneypots`, first makes sure a person could see it: waits for
+   * it to be visible, then refuses it (HoneypotError) if it stays transparent, off the page, too
+   * small, clipped away or camouflaged for a second, which lets fade-ins finish.
+   */
+  private async ready(target: Target, timeout?: number): Promise<Locator> {
+    const locator = this.locate(target);
+    if (!this.services.avoidHoneypots) return locator;
+    const check = () => locator.evaluate(honeypotReason, undefined, { timeout: 2000 }).catch(() => null);
+    const refuse = async (reason: string) =>
+      new HoneypotError(reason, await locator.evaluate(describeElement, undefined, { timeout: 2000 }).catch(() => String(target)));
+    try {
+      await locator.waitFor({ state: 'visible', timeout: timeout ?? this.services.timeout });
+    } catch (error) {
+      const reason = await check();
+      throw reason ? await refuse(reason) : error;
+    }
+    const deadline = Date.now() + 1000;
+    for (;;) {
+      const reason = await check();
+      if (!reason) return locator;
+      if (Date.now() >= deadline) throw await refuse(reason);
+      await sleep(100);
+    }
   }
 
   /** Runs an action, then waits as `waits.afterAction` says and hands off any challenge if `handoff.auto`. */

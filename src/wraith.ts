@@ -1,8 +1,9 @@
-import { chromium, firefox, webkit, type Browser, type BrowserContext } from 'playwright';
+import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page } from 'playwright';
 import { AIClient } from './ai/client.js';
 import {
   resolveAfterAction,
   resolveHuman,
+  resolveInstances,
   resolveNetwork,
   type HumanOption,
   type ResolvedNetwork,
@@ -17,7 +18,9 @@ import type { HumanBehavior } from './human/behavior.js';
 import { Humanizer } from './human/humanizer.js';
 import { createRng } from './human/random.js';
 import { resolveLogger, type Logger } from './logger.js';
+import { createFetcher, redactProxy, resolveProxies, type Fetcher, type ProxySettings } from './net/proxy.js';
 import { isRetryableStatus, Scheduler } from './net/scheduler.js';
+import { resolveUserAgents } from './net/user-agents.js';
 import { WraithPage, type GotoOptions } from './page.js';
 import { StaticPage } from './static-page.js';
 import { NetworkTracker, resolveSettle, type AfterAction, type ResolvedSettle } from './wait.js';
@@ -45,11 +48,25 @@ export interface StaticPaginateOptions {
 export interface NewPageOptions {
   /** Human behaviour for this page only, overriding the Wraith-wide setting. */
   human?: HumanOption;
+  /** Which instance to open the page in, from 0. Default: the one with the fewest open pages. */
+  instance?: number;
+}
+
+/** One independent browser session: a context (with its own cookies and proxy), opened on first use. */
+interface Slot {
+  index: number;
+  proxy: ProxySettings | undefined;
+  userAgent: string | undefined;
+  /** Its own browser, with `separateBrowsers`. */
+  browser: Promise<Browser> | undefined;
+  context: Promise<BrowserContext> | undefined;
+  live: BrowserContext | undefined;
+  openPages: number;
 }
 
 /**
- * The entry point. Holds one browser and context (launched lazily, on the first browser page),
- * the per-host rate limiter, and the AI client. Everything runs in your process.
+ * The entry point. Holds the browser and its sessions (launched lazily, on the first browser
+ * page), the per-host rate limiter, and the AI client. Everything runs in your process.
  *
  * ```ts
  * const wraith = createWraith({ human: 'natural' });
@@ -68,14 +85,49 @@ export class Wraith {
   private readonly settle: ResolvedSettle;
   private readonly handoff: ResolvedHandoff;
   private readonly consent: ConsentManager | undefined;
-  private launching: Promise<{ browser: Browser; context: BrowserContext }> | undefined;
+  /** How many independent sessions this Wraith runs. */
+  readonly instanceCount: number;
+  private readonly separateBrowsers: boolean;
+  private readonly slots: Slot[];
+  private readonly fetcher: Fetcher;
+  private sharedBrowser: Promise<Browser> | undefined;
   private pageCount = 0;
+  private nextSlot = 0;
 
   constructor(readonly options: WraithOptions = {}) {
     this.human = resolveHuman(options.human);
     this.network = resolveNetwork(options.network);
     this.logger = resolveLogger(options.logger);
-    this.scheduler = new Scheduler(this.network, this.logger);
+    if (!ENGINES[options.browser ?? 'chromium']) {
+      throw new WraithError(`Unknown browser "${options.browser}". Use chromium, firefox or webkit.`);
+    }
+    const proxies = resolveProxies(options.proxy);
+    if (proxies.length > 0 && options.context?.proxy) {
+      throw new WraithError('Set the proxy with either `proxy` or `context.proxy`, not both.');
+    }
+    if (options.userAgent !== undefined && options.context?.userAgent) {
+      throw new WraithError('Set the user agent with either `userAgent` or `context.userAgent`, not both.');
+    }
+    if (options.userAgent !== undefined && options.network?.userAgent) {
+      throw new WraithError('Set the user agent with either `userAgent` or `network.userAgent`, not both.');
+    }
+    const agents = resolveUserAgents(options.userAgent, options.browser ?? 'chromium');
+    // A single user agent also names the crawler in robots.txt matching.
+    if (agents.requests.length === 1 && options.userAgent !== 'rotate') this.network = { ...this.network, userAgent: agents.requests[0] };
+    const instances = resolveInstances(options.instances, proxies);
+    this.instanceCount = instances.count;
+    this.separateBrowsers = instances.separateBrowsers;
+    this.slots = Array.from({ length: instances.count }, (_, index) => ({
+      index,
+      proxy: proxies.length > 0 ? proxies[index % proxies.length] : undefined,
+      userAgent: agents.browser.length > 0 ? agents.browser[index % agents.browser.length] : undefined,
+      browser: undefined,
+      context: undefined,
+      live: undefined,
+      openPages: 0,
+    }));
+    this.fetcher = createFetcher(proxies, agents.requests);
+    this.scheduler = new Scheduler(this.network, this.logger, this.fetcher);
     this.aiClient = options.ai ? new AIClient(options.ai, this.logger) : undefined;
     this.afterAction = resolveAfterAction(options.waits?.afterAction);
     this.settle = resolveSettle(options.waits?.settle);
@@ -89,21 +141,33 @@ export class Wraith {
     return this.aiClient;
   }
 
-  /** The Playwright browser context, launching the browser if needed. */
-  async context(): Promise<BrowserContext> {
-    this.launching ??= this.launch();
+  /** The Playwright browser context of an instance (default the first), launching the browser if needed. */
+  async context(instance = 0): Promise<BrowserContext> {
+    const slot = this.slot(instance);
+    slot.context ??= this.createContext(slot);
     try {
-      return (await this.launching).context;
+      return await slot.context;
     } catch (error) {
-      this.launching = undefined;
+      slot.context = undefined;
       throw error;
     }
   }
 
-  /** Opens a new tab. */
+  /** Opens a new tab, in the least busy instance unless `instance` says which. */
   async newPage(options: NewPageOptions = {}): Promise<WraithPage> {
-    const context = await this.context();
-    const raw = await context.newPage();
+    const slot = options.instance === undefined ? this.leastBusy() : this.slot(options.instance);
+    // Count the page before awaiting anything, so pages opened together spread across instances.
+    slot.openPages++;
+    let raw: Page;
+    try {
+      raw = await (await this.context(slot.index)).newPage();
+    } catch (error) {
+      slot.openPages--;
+      throw error;
+    }
+    raw.once('close', () => {
+      slot.openPages = Math.max(0, slot.openPages - 1);
+    });
     // Each page gets its own random stream, so seeded runs stay reproducible with several tabs.
     const seed = this.options.seed === undefined ? undefined : this.options.seed + this.pageCount;
     this.pageCount++;
@@ -119,6 +183,8 @@ export class Wraith {
       headless: this.options.headless ?? true,
       consent: this.consent,
       ai: this.aiClient,
+      instance: slot.index,
+      avoidHoneypots: this.options.avoidHoneypots ?? false,
     });
   }
 
@@ -140,7 +206,7 @@ export class Wraith {
    */
   async fetch(url: string, options: FetchOptions = {}): Promise<StaticPage> {
     return this.scheduler.run(url, async () => {
-      const response = await fetch(url, {
+      const response = await this.fetcher.fetch(url, {
         method: options.method ?? 'GET',
         headers: {
           ...(this.network.userAgent ? { 'user-agent': this.network.userAgent } : {}),
@@ -153,7 +219,9 @@ export class Wraith {
       });
       if (isRetryableStatus(response.status)) throw new HttpError(response.status, url);
       const body = await response.text();
-      return new StaticPage(response.url || url, response.status, response.headers, body, this.aiClient);
+      return new StaticPage(response.url || url, response.status, response.headers, body, this.aiClient, {
+        avoidHoneypots: this.options.avoidHoneypots ?? false,
+      });
     });
   }
 
@@ -204,28 +272,63 @@ export class Wraith {
     });
   }
 
-  /** Saves cookies and local storage to a file. Load it later with `{ context: { storageState: path } }`. */
-  async saveSession(path: string): Promise<void> {
-    await (await this.context()).storageState({ path });
+  /** Saves an instance's cookies and local storage to a file. Load it later with `{ context: { storageState: path } }`. */
+  async saveSession(path: string, instance = 0): Promise<void> {
+    await (await this.context(instance)).storageState({ path });
   }
 
-  /** Closes the browser. Static fetches keep working afterwards; a new browser page relaunches it. */
+  /** Closes every browser and session. Static fetches keep working afterwards; a new browser page relaunches. */
   async close(): Promise<void> {
-    const launching = this.launching;
-    this.launching = undefined;
-    if (!launching) return;
-    const { browser, context } = await launching.catch(() => ({ browser: undefined, context: undefined }));
-    await context?.close().catch(() => {});
-    await browser?.close();
+    const contexts = this.slots.map((slot) => slot.context);
+    const browsers = [this.sharedBrowser, ...this.slots.map((slot) => slot.browser)];
+    this.sharedBrowser = undefined;
+    for (const slot of this.slots) {
+      slot.context = undefined;
+      slot.browser = undefined;
+      slot.live = undefined;
+    }
+    for (const pending of contexts) {
+      const context = await pending?.catch(() => undefined);
+      await context?.close().catch(() => {});
+    }
+    for (const pending of browsers) {
+      const browser = await pending?.catch(() => undefined);
+      await browser?.close().catch(() => {});
+    }
+    await this.fetcher.close();
   }
 
-  private async launch(): Promise<{ browser: Browser; context: BrowserContext }> {
-    const engine = ENGINES[this.options.browser ?? 'chromium'];
-    if (!engine) throw new WraithError(`Unknown browser "${this.options.browser}". Use chromium, firefox or webkit.`);
-    this.logger.debug(`Launching ${this.options.browser ?? 'chromium'}`);
-    const browser = await engine.launch({ headless: this.options.headless ?? true, ...this.options.launch });
+  private slot(instance: number): Slot {
+    const slot = Number.isInteger(instance) ? this.slots[instance] : undefined;
+    if (!slot) throw new WraithError(`instance must be a whole number from 0 to ${this.slots.length - 1}, not ${instance}`);
+    return slot;
+  }
+
+  /** The instance with the fewest open pages, taking turns between equally busy ones. */
+  private leastBusy(): Slot {
+    let best = this.slots[this.nextSlot % this.slots.length]!;
+    for (let i = 1; i < this.slots.length; i++) {
+      const slot = this.slots[(this.nextSlot + i) % this.slots.length]!;
+      if (slot.openPages < best.openPages) best = slot;
+    }
+    this.nextSlot = best.index + 1;
+    return best;
+  }
+
+  private async createContext(slot: Slot): Promise<BrowserContext> {
+    if (slot.proxy?.server.startsWith('socks5:') && slot.proxy.username !== undefined) {
+      throw new WraithError(
+        `Browsers can't log in to SOCKS proxies (${redactProxy(slot.proxy.server)}). Use an HTTP proxy for browser pages; ` +
+          'SOCKS proxies with a password still work for static fetches.',
+      );
+    }
+    const browser = await this.browserFor(slot);
+    const context = await browser.newContext({
+      ...this.options.context,
+      ...(slot.proxy ? { proxy: slot.proxy } : {}),
+      ...(slot.userAgent ? { userAgent: slot.userAgent } : {}),
+    });
     try {
-      const context = await browser.newContext(this.options.context);
       context.setDefaultTimeout(this.network.timeout);
       const blocked = new Set<string>(this.options.blockResources ?? []);
       if (blocked.size > 0) {
@@ -234,9 +337,52 @@ export class Wraith {
         );
       }
       await this.consent?.install(context);
-      return { browser, context };
     } catch (error) {
-      await browser.close().catch(() => {});
+      await context.close().catch(() => {});
+      throw error;
+    }
+    if (slot.proxy) this.logger.debug(`Instance ${slot.index} uses proxy ${slot.proxy.server}`);
+    slot.live = context;
+    // If the context closes (or its browser crashes), start a fresh one next time.
+    context.once('close', () => {
+      if (slot.live !== context) return;
+      slot.live = undefined;
+      slot.context = undefined;
+    });
+    return context;
+  }
+
+  private browserFor(slot: Slot): Promise<Browser> {
+    // Each launch forgets only itself, so an old browser going away can't drop a newer one.
+    if (this.separateBrowsers) {
+      if (!slot.browser) {
+        const launch: Promise<Browser> = this.launchBrowser(() => {
+          if (slot.browser === launch) slot.browser = undefined;
+        });
+        slot.browser = launch;
+      }
+      return slot.browser;
+    }
+    if (!this.sharedBrowser) {
+      const launch: Promise<Browser> = this.launchBrowser(() => {
+        if (this.sharedBrowser === launch) this.sharedBrowser = undefined;
+      });
+      this.sharedBrowser = launch;
+    }
+    return this.sharedBrowser;
+  }
+
+  /** Launches a browser; `forget` drops it from its slot if the launch fails or the browser goes away. */
+  private async launchBrowser(forget: () => void): Promise<Browser> {
+    const name = this.options.browser ?? 'chromium';
+    const engine = ENGINES[name];
+    this.logger.debug(`Launching ${name}`);
+    try {
+      const browser = await engine.launch({ headless: this.options.headless ?? true, ...this.options.launch });
+      browser.once('disconnected', forget);
+      return browser;
+    } catch (error) {
+      forget();
       throw error;
     }
   }

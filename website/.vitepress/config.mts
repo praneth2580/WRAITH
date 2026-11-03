@@ -57,6 +57,7 @@ export default defineConfig({
             { text: 'Crawling', link: '/guide/crawling' },
             { text: 'Consent banners', link: '/guide/consent' },
             { text: 'CAPTCHAs and codes', link: '/guide/captchas' },
+            { text: 'Honeypots', link: '/guide/honeypots' },
           ],
         },
         {
@@ -67,6 +68,7 @@ export default defineConfig({
           text: 'Configuration',
           items: [
             { text: 'Network and politeness', link: '/guide/network' },
+            { text: 'Proxies, user agents and instances', link: '/guide/proxies' },
             { text: 'Browser options and sessions', link: '/guide/browser-options' },
           ],
         },
