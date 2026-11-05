@@ -15,7 +15,7 @@ goto(url: string, options?: {
 }): Promise<Response | null>
 ```
 
-Navigates, through the robots.txt check, the rate limit and retries. `waitUntil` defaults to `'load'`. With `waits.afterAction: 'settle'`, it then waits for the page to settle; with `handoff.auto`, it then checks for a challenge. Returns Playwright's `Response`. Throws `HttpError` if the status is still 408/425/429/5xx after retries.
+Navigates, through the robots.txt check, the rate limit and retries. `waitUntil` defaults to `'load'`. With `waits.afterAction: 'settle'`, it then waits for the page to settle; with `handoff.auto`, it then checks for a challenge. Then it checks for a [bot protection](/guide/bot-protection) block or challenge page: a block throws `BlockedError` at once, and a challenge gets up to 15 seconds to clear by itself first (with `network.onBlock: 'return'`, neither throws). Returns Playwright's `Response`: the final page's, if a challenge cleared. Throws `HttpError` if the status is still 408/425/429/5xx after retries; block and challenge pages aren't retried.
 
 ### url(), title(), close()
 
@@ -177,6 +177,7 @@ Both throw `WraithError` if the `consent` option isn't set. [Guide](/guide/conse
 | --- | --- | --- |
 | `detectChallenge()` | `Promise<Challenge \| null>` | Finds a CAPTCHA, browser check or code prompt, with a PNG. Changes nothing |
 | `handoff(options?: HandoffOptions)` | `Promise<Challenge \| null>` | Gets a person through it. Options override the `handoff` option |
+| `blocked()` | `Promise<Block \| null>` | The bot protection block or challenge page showing, if any. `goto()` checks by itself. [Guide](/guide/bot-protection) |
 
 [Guide](/guide/captchas)
 

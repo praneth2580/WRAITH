@@ -7,11 +7,26 @@ Returned by `detectChallenge()` and `handoff()`, and passed to `onChallenge`.
 ```ts sig
 interface Challenge {
   kind: 'captcha' | 'otp' | 'browser-check';
-  provider: 'recaptcha' | 'hcaptcha' | 'turnstile' | 'geetest' | 'image' | 'cloudflare' | 'otp';
+  provider: 'recaptcha' | 'hcaptcha' | 'turnstile' | 'geetest' | 'datadome' | 'perimeterx' | 'image' | 'cloudflare' | 'otp';
   url: string;
   message: string;     // a one-line explanation; for codes, includes the page's own wording
   image: Buffer;       // PNG of the challenge, or of the form asking for the code
   answerable: boolean; // true when typing an answer solves it
+}
+```
+
+## Block
+
+Returned by `page.blocked()`, `staticPage.blocked` and `detectBlock()`. `BlockedError` has the same fields.
+
+```ts sig
+interface Block {
+  vendor: 'cloudflare' | 'akamai' | 'datadome' | 'perimeterx' | 'kasada' | 'imperva'
+        | 'aws-waf' | 'f5' | 'sucuri' | 'vercel' | 'anubis';
+  kind: 'challenge' | 'block'; // wants proof first, or refused outright
+  status: number;
+  url: string;
+  evidence: string;            // what identified it, such as 'cf-mitigated: challenge header'
 }
 ```
 

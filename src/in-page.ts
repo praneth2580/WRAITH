@@ -157,7 +157,16 @@ export function readAppState(names: string[]): Record<string, unknown> {
   return out;
 }
 
-export type ChallengeProvider = 'recaptcha' | 'hcaptcha' | 'turnstile' | 'geetest' | 'image' | 'cloudflare' | 'otp';
+export type ChallengeProvider =
+  | 'recaptcha'
+  | 'hcaptcha'
+  | 'turnstile'
+  | 'geetest'
+  | 'datadome'
+  | 'perimeterx'
+  | 'image'
+  | 'cloudflare'
+  | 'otp';
 
 /** A challenge as found in the page. The element to show is tagged data-wraith-challenge; the answer field data-wraith-answer. */
 export interface RawChallenge {
@@ -191,6 +200,9 @@ export function detectChallenge(): RawChallenge | null {
     ['hcaptcha', 'iframe[src*="hcaptcha.com"]:not([src*="invisible"])'],
     ['turnstile', 'iframe[src*="challenges.cloudflare.com"]'],
     ['geetest', '.geetest_panel, .geetest_holder, .geetest_box'],
+    ['datadome', 'iframe[src*="captcha-delivery.com"]'],
+    // HUMAN's (PerimeterX's) "Press & Hold" button.
+    ['perimeterx', '#px-captcha'],
     [
       'image',
       'img[src*="captcha" i], img[id*="captcha" i], img[class*="captcha" i], img[alt*="captcha" i], canvas[id*="captcha" i], canvas[class*="captcha" i]',

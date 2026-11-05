@@ -67,6 +67,12 @@ const logger: Logger = {
 const wraith = createWraith({ logger });
 ```
 
+## Bot protection
+
+| Export | |
+| --- | --- |
+| `detectBlock({ url, status, headers, body })` | Recognises a bot protection block or challenge page in any response. Returns a [`Block`](/reference/types#block) or `null`. [Guide](/guide/bot-protection#handling-them-yourself) |
+
 ## Types
 
-All option and result types are exported for TypeScript: `WraithOptions`, `NetworkOptions`, `RateLimitOptions`, `ProxyOption`, `ProxySettings`, `InstanceOptions`, `UserAgentOption`, `Honeypot`, `WaitOptions`, `SettleOptions`, `HandoffOptions`, `HumanOption`, `HumanBehavior`, `HumanPreset`, `Range`, `Target`, `TargetQuery`, `SelectorSchema`, `FieldSpec`, `ValueField`, `NestedField`, `InferSchema`, `GotoOptions`, `FetchOptions`, `PaginateOptions`, `StaticPaginateOptions`, `CrawlOptions`, `CrawlResult`, `Challenge`, `ConsentStatus`, `ActOptions`, `ActResult`, `AIOptions` and more.
+All option and result types are exported for TypeScript: `WraithOptions`, `NetworkOptions`, `RateLimitOptions`, `ProxyOption`, `ProxySettings`, `InstanceOptions`, `UserAgentOption`, `Honeypot`, `WaitOptions`, `SettleOptions`, `HandoffOptions`, `HumanOption`, `HumanBehavior`, `HumanPreset`, `Range`, `Target`, `TargetQuery`, `SelectorSchema`, `FieldSpec`, `ValueField`, `NestedField`, `InferSchema`, `GotoOptions`, `FetchOptions`, `PaginateOptions`, `StaticPaginateOptions`, `CrawlOptions`, `CrawlResult`, `Challenge`, `Block`, `BotProtection`, `ConsentStatus`, `ActOptions`, `ActResult`, `AIOptions` and more.

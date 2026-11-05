@@ -27,7 +27,7 @@ It builds on existing libraries rather than reinventing them: [Playwright](https
 
 - [Install](#install)
 - [Quick start](#quick-start)
-- Guides: [Human behaviour](#human-behaviour) · [Browser pages and static pages](#browser-pages-and-static-pages) · [Extracting with selectors](#extracting-with-selectors) · [Sites with generated class names](#sites-with-generated-class-names) · [Waiting](#waiting) · [Pagination](#pagination) · [Consent banners](#consent-banners) · [CAPTCHAs and verification codes](#captchas-and-verification-codes) · [Crawling](#crawling) · [AI](#ai) · [Network and politeness](#network-and-politeness) · [Proxies and instances](#proxies-and-instances) · [User agents](#user-agents) · [Honeypots](#honeypots) · [Browser options and sessions](#browser-options-and-sessions)
+- Guides: [Human behaviour](#human-behaviour) · [Browser pages and static pages](#browser-pages-and-static-pages) · [Extracting with selectors](#extracting-with-selectors) · [Sites with generated class names](#sites-with-generated-class-names) · [Waiting](#waiting) · [Pagination](#pagination) · [Consent banners](#consent-banners) · [CAPTCHAs and verification codes](#captchas-and-verification-codes) · [Crawling](#crawling) · [AI](#ai) · [Network and politeness](#network-and-politeness) · [Proxies and instances](#proxies-and-instances) · [User agents](#user-agents) · [Honeypots](#honeypots) · [Bot protection](#bot-protection) · [Browser options and sessions](#browser-options-and-sessions)
 - [API reference](#api-reference): [createWraith options](#createwraith-options) · [Wraith class](#wraith-class) · [WraithPage](#wraithpage) · [StaticPage](#staticpage) · [Targets](#targets) · [Selector schemas](#selector-schemas) · [JsonCapture](#jsoncapture) · [AI options](#ai-options) · [Result types](#result-types) · [Errors](#errors) · [Other exports](#other-exports)
 - [Troubleshooting](#troubleshooting)
 - [Use responsibly](#use-responsibly) · [Changelog](#changelog) · [Development](#development) · [License](#license)
@@ -251,7 +251,7 @@ This uses DuckDuckGo's autoconsent rules (hundreds of consent platforms, in page
 
 ## CAPTCHAs and verification codes
 
-wraith doesn't solve CAPTCHAs. It hands them to a person and carries on afterwards. `detectChallenge()` finds reCAPTCHA, hCaptcha, Turnstile, GeeTest, image CAPTCHAs, Cloudflare browser checks and one-time-code prompts. It ignores invisible and already-solved widgets, and returns a PNG of the challenge:
+wraith doesn't solve CAPTCHAs. It hands them to a person and carries on afterwards. `detectChallenge()` finds reCAPTCHA, hCaptcha, Turnstile, GeeTest, DataDome and HUMAN (PerimeterX) "Press & Hold" CAPTCHAs, image CAPTCHAs, Cloudflare browser checks and one-time-code prompts. It ignores invisible and already-solved widgets, and returns a PNG of the challenge:
 
 ```ts
 const challenge = await page.detectChallenge();
@@ -273,7 +273,7 @@ createWraith({
 });
 ```
 
-Widgets like reCAPTCHA need clicks, so they can only be solved in a visible browser (`headless: false`). Image CAPTCHAs and one-time codes can be answered from anywhere.
+Widgets like reCAPTCHA, DataDome's and "Press & Hold" need clicks, so they can only be solved in a visible browser (`headless: false`). Image CAPTCHAs and one-time codes can be answered from anywhere.
 
 ## Crawling
 
@@ -351,6 +351,8 @@ createWraith({
     rateLimit: { concurrency: 2, maxRequests: 4, intervalMs: 1000 }, // per host; false to disable
     respectRobotsTxt: true,           // throws RobotsDisallowedError; honours Crawl-delay
     headers: { 'accept-language': 'en' },
+    browserHeaders: true,             // with a browser user agent, send that browser's other headers too
+    onBlock: 'throw',                 // BlockedError when bot protection answers instead; 'return' to inspect it
   },
   userAgent: 'my-bot/1.0 (+https://example.com/bot)', // also matched against robots.txt
 });
@@ -401,7 +403,20 @@ createWraith({ userAgent: 'rotate' });  // built-in: current Chrome, Edge, Firef
 - `'rotate'` takes its version numbers from the browsers Playwright installs, so the list stays current when you update Playwright. `builtInUserAgents()` returns it.
 - A single string also names you in robots.txt matching. With a list or `'rotate'`, the `*` rules apply.
 
-Changing a browser page's user agent changes the `User-Agent` header and `navigator.userAgent`, not the browser underneath: `navigator.platform`, client hints and the rest still describe the real browser. A site that cross-checks them can tell.
+With a Chrome or Edge user agent on Chromium, everything else the browser says about itself agrees with it:
+
+- The `sec-ch-ua*` client-hint headers and `navigator.userAgentData` name the same browser, version and system. Brand lists follow Chrome's own rules for each version.
+- `navigator.platform` matches the system (`Win32`, `MacIntel`, `Linux x86_64`…).
+- `Accept-Language` and `navigator.languages` follow `context.locale`, which defaults to `en-US` once you set a user agent.
+
+**Static fetches** with a browser user agent send the other headers that browser sends: Accept, Accept-Language, client hints and `Sec-Fetch-*`, the last two only over HTTPS, as browsers do. Headers you set yourself win, and `network.browserHeaders: false` turns this off. A user agent that isn't a browser, such as `my-bot/1.0`, changes nothing else.
+
+**What doesn't change:**
+
+- Firefox and WebKit pages get the new `User-Agent` and `navigator.userAgent` only.
+- Static fetches still use Node's TLS connection, which a site can tell apart from a browser's.
+- A popup's first request goes out before wraith can adjust it.
+- `navigator.webdriver` stays `true`. wraith doesn't hide that the browser is automated.
 
 ## Honeypots
 
@@ -419,6 +434,29 @@ await page.honeypots();        // [{ element: 'a.promo "Free gift"', reason: 'tr
 An element counts as a honeypot when a person couldn't see or reach it: hidden (`display: none` or `visibility: hidden`, on it or a parent), transparent (opacity under 0.1, counting its parents), smaller than 2×2 px, positioned off the page, clipped away by its container, or text the same colour as its background. A form control hidden behind a visible label (a custom checkbox) is fine, because people click the label.
 
 With the option on, actions wait for their element to become visible as usual, then refuse it with `HoneypotError` if it's still a honeypot a second later (which lets fade-ins finish). `ai.act()` never sees honeypots. On static pages, `links()` leaves out links the markup hides (`hidden`, inline styles, and classes like `d-none` or `sr-only`); there's no CSS to compute without a browser, so that's a best guess. `page.honeypots()` works with the option off too, to see what a page has. Links hidden until a hover or click, such as dropdown menus, are left out as well; most sites link those pages visibly elsewhere.
+
+## Bot protection
+
+Sites behind Cloudflare, Akamai, DataDome, HUMAN (PerimeterX), Kasada, Imperva, AWS WAF, F5, Sucuri, Vercel or Anubis sometimes answer with a block page or a challenge instead of the page you asked for. wraith recognises these and stops with `BlockedError`. It doesn't extract from the block page, and it doesn't keep asking:
+
+```ts
+import { BlockedError } from 'wraithjs';
+
+try {
+  await wraith.fetch(url);
+} catch (error) {
+  if (error instanceof BlockedError) console.warn(error.vendor, error.kind, error.status); // 'cloudflare' 'challenge' 403
+  else throw error;
+}
+```
+
+- **Blocks** (`kind: 'block'`), such as Cloudflare's error 1020 or Akamai's "Access Denied", throw straight away.
+- **Challenges** (`kind: 'challenge'`): a static fetch can't take part in one, so it throws. A browser page gives a JavaScript check up to 15 seconds to clear by itself, as it would for a person, then throws. CAPTCHAs can go to a person with [`handoff`](#captchas-and-verification-codes).
+- Block and challenge pages are never retried, even with a 429 or 503 status, because asking again only adds load.
+
+To handle them yourself, pass `network: { onBlock: 'return' }`. Then `page.blocked` (static pages) or `await page.blocked()` (browser pages) says what answered: `{ vendor, kind, status, url, evidence }`. `goto()` and `fetch()` check by themselves; after a click that navigates, call `blocked()` if it matters. `detectBlock({ url, status, headers, body })` checks any response.
+
+Recognition goes by each service's own markers, such as a `cf-mitigated` header or a challenge page's script, not by status codes alone. Ordinary pages from protected sites, which often carry the same services' scripts, aren't flagged. A block page wraith doesn't know about looks like any other response.
 
 ## Browser options and sessions
 
@@ -479,6 +517,8 @@ Everything below is exported from `wraithjs`. Times are in milliseconds.
 | `respectRobotsTxt` | `boolean` | `false` | Throw `RobotsDisallowedError` for disallowed URLs; a Crawl-delay replaces the rate limit |
 | `userAgent` | `string` | | For static fetches and robots.txt matching. Browser pages use `context.userAgent` |
 | `headers` | `Record<string, string>` | | Extra headers for static fetches |
+| `browserHeaders` | `boolean` | `true` | With a browser user agent, static fetches also send that browser's Accept, Accept-Language, client hints and `Sec-Fetch-*` |
+| `onBlock` | `'throw' \| 'return'` | `'throw'` | [Bot protection](#bot-protection): throw `BlockedError`, or return the page with `blocked` set. Never retried either way |
 
 `handoff`:
 
@@ -583,6 +623,7 @@ A target is a selector, a Playwright `Locator`, or a [TargetQuery](#targets). Ac
 | `waitForConsent({ timeout = 5000 })` | `Promise<ConsentStatus>` | Needs the `consent` option. Timing out is normal on pages without a banner |
 | `consentStatus()` | `ConsentStatus` | |
 | `detectChallenge()` | `Promise<Challenge \| null>` | Finds a CAPTCHA, browser check or code prompt, with a PNG. Changes nothing |
+| `blocked()` | `Promise<Block \| null>` | The [bot protection](#bot-protection) block or challenge page showing, if any |
 | `handoff(options?)` | `Promise<Challenge \| null>` | Gets a person through it. Same options as `handoff` above |
 | `ai.extract(schema, { instruction?, selector? })` | `Promise<z.infer<S>>` | Needs the `ai` option |
 | `ai.ask(question, { selector? })` | `Promise<string>` | |
@@ -604,6 +645,7 @@ A target is a selector, a Playwright `Locator`, or a [TargetQuery](#targets). Ac
 | `structuredData()` | `StructuredData` | |
 | `links()`, `text(selector?)`, `markdown(selector?)` | | As on `WraithPage`, but synchronous |
 | `json<T>()` | `T` | Parses the body as JSON |
+| `blocked` | `Block \| null` | The [bot protection](#bot-protection) service that answered instead, with `onBlock: 'return'` |
 | `ai.extract(schema, options?)`, `ai.ask(question, options?)` | | Needs the `ai` option |
 
 ### Targets
@@ -672,7 +714,8 @@ Every provider also takes `maxInputChars`: longer content is refused, not cut. D
 
 ### Result types
 
-- **`Challenge`**: `{ kind: 'captcha' | 'otp' | 'browser-check', provider, url, message, image: Buffer, answerable }`. `provider` is `'recaptcha' | 'hcaptcha' | 'turnstile' | 'geetest' | 'image' | 'cloudflare' | 'otp'`. `answerable` is true when typing an answer solves it.
+- **`Challenge`**: `{ kind: 'captcha' | 'otp' | 'browser-check', provider, url, message, image: Buffer, answerable }`. `provider` is `'recaptcha' | 'hcaptcha' | 'turnstile' | 'geetest' | 'datadome' | 'perimeterx' | 'image' | 'cloudflare' | 'otp'`. `answerable` is true when typing an answer solves it.
+- **`Block`**: `{ vendor, kind: 'challenge' | 'block', status, url, evidence }`. `vendor` is `'cloudflare' | 'akamai' | 'datadome' | 'perimeterx' | 'kasada' | 'imperva' | 'aws-waf' | 'f5' | 'sucuri' | 'vercel' | 'anubis'`; `evidence` says what identified it.
 - **`ConsentStatus`**: `{ cmp: string | null, done, succeeded: boolean | null, hiddenOnly }`. `hiddenOnly` means the banner was hidden with CSS without recording a choice.
 - **`ActResult`**: `{ success, message, steps }`. Each step is `{ action: 'click' | 'type' | 'select' | 'press' | 'scroll', element?, value?, reason, error? }`, with `%variables%` left unfilled.
 - **`CrawlResult<T>`**: `{ results: { url, depth, data: T }[], errors: { url, error }[] }`.
@@ -691,6 +734,7 @@ Every error wraith throws extends `WraithError`.
 | `AIError` | A provider failed, refused, or replied outside the schema |
 | `MissingDependencyError` | An optional package, such as `@anthropic-ai/sdk`, isn't installed. Has `packageName` |
 | `HoneypotError` | With `avoidHoneypots`, an action's element is one a person couldn't see. Has `reason` and `element` |
+| `BlockedError` | Bot protection refused the request, or challenged it and the challenge wasn't passed. Has `vendor`, `kind`, `status`, `url` and `evidence`. Never retried |
 
 Playwright's own errors, such as its `TimeoutError` when an element never appears, pass through unchanged.
 
@@ -698,6 +742,7 @@ Playwright's own errors, such as its `TimeoutError` when an element never appear
 
 - `z`: the zod instance wraith uses.
 - `builtInUserAgents(engine?)`: the user agents `'rotate'` uses.
+- `detectBlock({ url, status, headers, body })`: recognises a bot protection block or challenge page in any response.
 - `waitUntil(condition, options)`: the standalone polling helper. `DEFAULT_LOADERS` lists the built-in loader selectors.
 - `htmlToMarkdown(html, { selector?, baseUrl? })`, `htmlToText(html, selector?)`, `extractHtml(html, schema, baseUrl?)`, `jsonLdOfType(data, type)`.
 - `humanPresets`, `Humanizer`, `humanPath`, `pointInBox`, `createRng`, `sleep`: the human-behaviour building blocks.
@@ -724,13 +769,23 @@ Playwright's own errors, such as its `TimeoutError` when an element never appear
 
 **`MissingDependencyError`.** Install the provider's SDK: `npm install @anthropic-ai/sdk` or `npm install openai`.
 
+**`BlockedError`.** The site's bot protection answered instead of the site. A `'block'` means it refused this client: check the site's terms, slow down, or ask the owner for access or an API. A `'challenge'` from a static fetch needs a browser page; from a browser page, it didn't clear in 15 seconds, so if it's a CAPTCHA, turn on `handoff`. See [Bot protection](#bot-protection).
+
 Set `WRAITH_DEBUG=1` (or `logger: true`) to see retries, robots.txt decisions, consent handling and other events.
 
 ## Use responsibly
 
-Check a site's terms before you scrape it, keep the rate limit on, and consider `respectRobotsTxt: true`. Human-like input, proxies and user agents make automation behave naturally and keep it reliable. They don't give you permission to access anything, and wraith deliberately doesn't solve CAPTCHAs. The rate limit applies per site whatever proxies or user agents you use.
+Check a site's terms before you scrape it, keep the rate limit on, and consider `respectRobotsTxt: true`. Human-like input, proxies and user agents make automation behave naturally and keep it reliable. They don't give you permission to access anything. wraith deliberately doesn't solve CAPTCHAs, hide that its browser is automated, or retry when a site's bot protection blocks it. The rate limit applies per site whatever proxies or user agents you use.
 
 ## Changelog
+
+### Unreleased
+
+- **Consistent identity.** With a Chrome or Edge user agent on Chromium, client hints (`sec-ch-ua*`, `navigator.userAgentData`), `navigator.platform` and languages now match it, instead of still naming HeadlessChrome on Linux. Setting a user agent also sets `context.locale` to `en-US` unless you choose one.
+- **Browser headers for static fetches.** With a browser user agent, static fetches send that browser's Accept, Accept-Language, client hints and `Sec-Fetch-*` headers. Turn off with `network.browserHeaders: false`.
+- **Bot protection.** Block and challenge pages from Cloudflare, Akamai, DataDome, HUMAN, Kasada, Imperva, AWS WAF, F5, Sucuri, Vercel and Anubis throw `BlockedError` (or, with `network.onBlock: 'return'`, show up in `page.blocked`) and are no longer retried. Browser pages give a JavaScript check up to 15 s to clear first. **Behaviour change:** these used to come back as ordinary pages.
+- `detectChallenge()` and hand-off now find DataDome and HUMAN "Press & Hold" CAPTCHAs.
+- New exports: `BlockedError`, `detectBlock`, and the `Block` and `BotProtection` types.
 
 ### 0.1.0-beta.0
 

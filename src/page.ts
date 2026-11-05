@@ -2,9 +2,10 @@ import { load } from 'cheerio';
 import type { Locator, Page, Response } from 'playwright';
 import { PageAI } from './ai/act.js';
 import type { AIClient } from './ai/client.js';
+import { adviceFor, detectBlock, type Block } from './blocks.js';
 import { JsonCapture, type ResponseMatcher } from './capture.js';
 import type { ConsentManager, ConsentStatus } from './consent.js';
-import { HoneypotError, HttpError, WraithError } from './errors.js';
+import { BlockedError, HoneypotError, HttpError, WraithError } from './errors.js';
 import { extractLinks, htmlToMarkdown, htmlToText, normalizeLinks } from './extract/content.js';
 import { documentBaseUrl, extractWithSchema, type InferSchema, type SelectorSchema } from './extract/schema.js';
 import { APP_STATE_GLOBALS, structuredDataFromHtml, type StructuredData } from './extract/structured.js';
@@ -71,6 +72,16 @@ export interface PageServices {
   /** Which of the Wraith's instances the page belongs to. */
   instance: number;
   avoidHoneypots: boolean;
+  onBlock: 'throw' | 'return';
+}
+
+/** How long `goto()` gives a bot protection check to clear by itself, at most. */
+const CHALLENGE_WAIT_MS = 15_000;
+
+/** The block or challenge page a navigation response carries, if any. */
+async function blockIn(response: Response): Promise<Block | null> {
+  const [headers, body] = await Promise.all([response.allHeaders().catch(() => ({})), response.text().catch(() => '')]);
+  return detectBlock({ url: response.url(), status: response.status(), headers, body });
 }
 
 /**
@@ -82,12 +93,21 @@ export class WraithPage {
   readonly human: Humanizer;
   private aiHelper: PageAI | undefined;
   private handingOff = false;
+  /** The response the current document came in, for `blocked()`. */
+  private lastNavigation: Response | undefined;
 
   constructor(
     readonly raw: Page,
     private readonly services: PageServices,
   ) {
     this.human = services.human;
+    raw.on('response', (response) => {
+      try {
+        if (response.request().isNavigationRequest() && response.frame() === raw.mainFrame()) this.lastNavigation = response;
+      } catch {
+        // Service worker responses have no frame.
+      }
+    });
   }
 
   /** Which of the Wraith's instances (independent sessions) this page belongs to, from 0. */
@@ -105,7 +125,8 @@ export class WraithPage {
 
   /**
    * Navigates to `url`, respecting robots.txt (if enabled) and the per-host rate limit, and
-   * retrying timeouts, network errors and 408/425/429/5xx responses.
+   * retrying timeouts, network errors and 408/425/429/5xx responses. A bot protection block page
+   * throws BlockedError (never retried); a challenge gets up to 15 s to clear by itself first.
    */
   async goto(url: string, options: GotoOptions = {}): Promise<Response | null> {
     const response = await this.services.scheduler.run(url, async () => {
@@ -113,12 +134,14 @@ export class WraithPage {
         waitUntil: options.waitUntil ?? 'load',
         timeout: options.timeout ?? this.services.timeout,
       });
-      if (res && isRetryableStatus(res.status())) throw new HttpError(res.status(), url);
+      // A bot protection page isn't retried, even with a retryable status: asking again only adds load.
+      if (res && isRetryableStatus(res.status()) && !(await blockIn(res))) throw new HttpError(res.status(), url);
       return res;
     });
     if (this.services.afterAction === 'settle') await this.waitForSettled();
     await this.autoHandoff();
-    return response;
+    // If a check cleared and the page reloaded, the response that matters is the new one.
+    return (await this.checkBlocked()) ? (this.lastNavigation ?? response) : response;
   }
 
   // ---- Actions ---------------------------------------------------------------------------
@@ -380,7 +403,27 @@ export class WraithPage {
     return this.consentManager().waitFor(this.raw, options.timeout ?? 5000);
   }
 
-  // ---- CAPTCHAs and verification codes ---------------------------------------------------
+  // ---- CAPTCHAs, verification codes and bot protection -----------------------------------
+
+  /**
+   * The bot protection service that answered instead of the site (its block page or challenge),
+   * or null for an ordinary page. Looks at the current document and the response it came in.
+   * `goto()` checks this itself; after clicks that navigate, call it when it matters.
+   */
+  async blocked(): Promise<Block | null> {
+    const response = this.lastNavigation;
+    const [headers, body] = await Promise.all([
+      response ? response.allHeaders().catch(() => ({})) : {},
+      this.raw
+        .evaluate(() => {
+          // Block pages are small; for a huge document, the start is enough to tell.
+          const html = document.documentElement?.outerHTML ?? '';
+          return html.length > 500_000 ? html.slice(0, 20_000) : html;
+        })
+        .catch(() => ''),
+    ]);
+    return detectBlock({ url: this.raw.url(), status: response?.status() ?? 200, headers, body });
+  }
 
   /**
    * Looks for a CAPTCHA, browser check or one-time-code prompt and returns it with a PNG of the
@@ -500,6 +543,29 @@ export class WraithPage {
         await this.autoHandoff();
       },
     };
+  }
+
+  /**
+   * With `onBlock: 'throw'`, throws BlockedError for a block page, or for a challenge that doesn't
+   * clear by itself (the way a browser check does) within 15 s. Returns whether a challenge cleared.
+   */
+  private async checkBlocked(): Promise<boolean> {
+    if (this.services.onBlock !== 'throw' || this.raw.isClosed()) return false;
+    let block = await this.blocked();
+    if (!block) return false;
+    const waitMs = Math.min(CHALLENGE_WAIT_MS, this.services.timeout);
+    if (block.kind === 'challenge') {
+      const deadline = Date.now() + waitMs;
+      while (block?.kind === 'challenge' && Date.now() < deadline) {
+        await sleep(500);
+        block = await this.blocked();
+      }
+      if (!block) {
+        await this.raw.waitForLoadState('load', { timeout: this.services.timeout }).catch(() => {});
+        return true;
+      }
+    }
+    throw new BlockedError(block, adviceFor(block, 'browser', waitMs));
   }
 
   private async autoHandoff(): Promise<void> {

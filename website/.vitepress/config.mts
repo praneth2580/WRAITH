@@ -58,6 +58,7 @@ export default defineConfig({
             { text: 'Consent banners', link: '/guide/consent' },
             { text: 'CAPTCHAs and codes', link: '/guide/captchas' },
             { text: 'Honeypots', link: '/guide/honeypots' },
+            { text: 'Bot protection', link: '/guide/bot-protection' },
           ],
         },
         {

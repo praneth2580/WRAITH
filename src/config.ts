@@ -45,6 +45,19 @@ export interface NetworkOptions {
   userAgent?: string;
   /** Extra headers for static fetches. */
   headers?: Record<string, string>;
+  /**
+   * When a static fetch's user agent is a browser (Chrome, Edge, Firefox or Safari), also send the
+   * other headers that browser sends: Accept, Accept-Language, client hints and `Sec-Fetch-*`.
+   * Headers you set yourself win. Default true.
+   */
+  browserHeaders?: boolean;
+  /**
+   * What to do when a bot protection service (Cloudflare, Akamai, DataDome…) answers instead of
+   * the site. `'throw'` (default) throws `BlockedError`, after giving a browser check a few seconds
+   * to clear by itself; `'return'` returns the page anyway, so you can inspect `blocked`. Blocks
+   * are never retried either way.
+   */
+  onBlock?: 'throw' | 'return';
 }
 
 export type ResourceType = 'image' | 'media' | 'font' | 'stylesheet';
@@ -152,6 +165,8 @@ export interface ResolvedNetwork {
   respectRobotsTxt: boolean;
   userAgent: string | undefined;
   headers: Record<string, string>;
+  browserHeaders: boolean;
+  onBlock: 'throw' | 'return';
 }
 
 export function resolveNetwork(options: NetworkOptions = {}): ResolvedNetwork {
@@ -168,6 +183,10 @@ export function resolveNetwork(options: NetworkOptions = {}): ResolvedNetwork {
   const retries = options.retries ?? 2;
   if (!(timeout > 0)) throw new WraithError('network.timeout must be greater than 0');
   if (!Number.isInteger(retries) || retries < 0) throw new WraithError('network.retries must be a whole number >= 0');
+  const onBlock = options.onBlock ?? 'throw';
+  if (onBlock !== 'throw' && onBlock !== 'return') {
+    throw new WraithError(`network.onBlock must be 'throw' or 'return', not ${JSON.stringify(options.onBlock)}`);
+  }
   return {
     timeout,
     retries,
@@ -175,6 +194,8 @@ export function resolveNetwork(options: NetworkOptions = {}): ResolvedNetwork {
     respectRobotsTxt: options.respectRobotsTxt ?? false,
     userAgent: options.userAgent,
     headers: options.headers ?? {},
+    browserHeaders: options.browserHeaders ?? true,
+    onBlock,
   };
 }
 

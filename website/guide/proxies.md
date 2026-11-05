@@ -95,7 +95,27 @@ A single user agent string also names you when matching robots.txt rules, so `us
 
 ### What a user agent changes
 
-For browser pages, the user agent changes the `User-Agent` header and `navigator.userAgent`, not the browser underneath. `navigator.platform`, client hints such as `Sec-CH-UA`, and other properties still describe the real browser and machine, so a site that cross-checks them can tell. For the most consistent identity in a browser, leave `userAgent` unset or pick agents matching the machine wraith runs on.
+A browser describes itself in several places besides `User-Agent`, and sites compare them. When they disagree, for example a Windows Chrome user agent with client hints naming HeadlessChrome on Linux, the mismatch alone marks the visitor as automated. So with a Chrome or Edge user agent on Chromium, wraith makes the rest agree:
+
+| | Matches the user agent |
+| --- | --- |
+| `Sec-CH-UA`, `Sec-CH-UA-Mobile`, `Sec-CH-UA-Platform` headers | Brand, version and system, with brand lists that follow Chrome's own rules for each version |
+| `navigator.userAgentData` | The same, including high-entropy values such as `fullVersionList` and `platformVersion` |
+| `navigator.platform` | `Win32`, `MacIntel`, `Linux x86_64`… |
+| `Accept-Language`, `navigator.languages` | `context.locale`, which defaults to `en-US` once you set a user agent: `en-US,en;q=0.9` |
+
+This applies to every page in the instance, iframes and popups included, and to `context.userAgent` as well as `userAgent`. Set `context.locale` (and `context.timezoneId`) to match where your proxy is.
+
+**Static fetches** with a browser user agent send the other headers that browser sends: `Accept`, `Accept-Language`, `Upgrade-Insecure-Requests`, client hints and `Sec-Fetch-*`. Client hints and `Sec-Fetch-*` go over HTTPS only, as browsers send them. Headers you pass yourself win, and `network.browserHeaders: false` turns this off.
+
+A user agent that isn't a browser, such as `my-bot/1.0 (+https://example.com/bot)`, changes nothing else. That's the honest choice when you're a crawler and want sites to know it.
+
+What stays the same:
+
+- **Firefox and WebKit** pages get the new `User-Agent` and `navigator.userAgent` only.
+- **Static fetches use Node's TLS connection.** Its fingerprint differs from a browser's, and some services check it. For those sites, use a browser page.
+- **A popup's first request** goes out with Chromium's own client hints, before wraith can adjust the new tab. Everything after it matches.
+- **`navigator.webdriver` stays `true`.** wraith doesn't hide that the browser is automated.
 
 `userAgent` replaces `context.userAgent` and `network.userAgent`; set only one of them.
 
@@ -175,3 +195,4 @@ The per-host [rate limit](/guide/network#rate-limit) is shared by all instances 
 - **SOCKS proxies with a login don't work in browsers.** Chromium, Firefox and WebKit can't log in to SOCKS proxies, so wraith refuses to start a browser instance with one. Use an HTTP proxy for browser pages; SOCKS5 with a login works for static fetches.
 - **SOCKS5 for static fetches** uses undici's SOCKS support, which Node marks experimental: it prints a one-time `ExperimentalWarning`.
 - **Set the proxy in one place.** `proxy` and `context.proxy` can't both be set.
+- **Proxies don't change your browser's location.** The timezone and language come from `context.timezoneId` and `context.locale`; set them to match the proxy.

@@ -12,6 +12,7 @@ A page downloaded without a browser, from `wraith.fetch()`, `wraith.paginate()` 
 | `headers` | `Headers` | Response headers (`headers.get('content-type')`) |
 | `body` | `string` | The raw response body |
 | `$` | `CheerioAPI` | The parsed document, for [cheerio](https://cheerio.js.org) queries |
+| `blocked` | `Block \| null` | The bot protection service that answered instead of the site. Only seen with `network.onBlock: 'return'`; otherwise `fetch()` throws `BlockedError`. [Guide](/guide/bot-protection) |
 
 ## Methods
 

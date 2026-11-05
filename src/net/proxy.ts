@@ -1,5 +1,6 @@
-import { ProxyAgent, Socks5ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
+import { Agent, ProxyAgent, Socks5ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 import { WraithError } from '../errors.js';
+import { browserHeaders } from './identity.js';
 
 /** A proxy server, in the shape Playwright uses. */
 export interface ProxySettings {
@@ -82,14 +83,43 @@ function dispatcherFor(proxy: ProxySettings): Dispatcher {
     return new Socks5ProxyAgent(proxy.server, {
       ...(proxy.username !== undefined ? { username: proxy.username } : {}),
       ...(proxy.password !== undefined ? { password: proxy.password } : {}),
-    });
+    }).compose(restoreFetchMode);
   }
   const credentials = proxy.username !== undefined ? `${proxy.username}:${proxy.password ?? ''}` : undefined;
   return new ProxyAgent({
     uri: proxy.server,
     ...(credentials ? { token: `Basic ${Buffer.from(credentials).toString('base64')}` } : {}),
-  });
+  }).compose(restoreFetchMode);
 }
+
+/** Carries the Sec-Fetch-Mode a request should have past fetch(); empty means none. Never sent. */
+const FETCH_MODE_HEADER = 'x-wraith-sec-fetch-mode';
+
+/**
+ * fetch() always sends `Sec-Fetch-Mode` with its own mode, 'cors', and can't be told 'navigate'.
+ * For requests that present a browser, this puts back the value that browser would send, or
+ * removes it where a browser sends none (plain HTTP).
+ */
+const restoreFetchMode: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (options, handler) => {
+  const given = options.headers;
+  // fetch() passes a plain object; leave any other shape alone.
+  if (!given || Array.isArray(given) || typeof given !== 'object' || Symbol.iterator in given) return dispatch(options, handler);
+  const entries = Object.entries(given as Record<string, string | string[] | undefined>);
+  const wanted = entries.find(([name]) => name.toLowerCase() === FETCH_MODE_HEADER);
+  if (!wanted) return dispatch(options, handler);
+  const mode = String(wanted[1] ?? '');
+  const headers: Record<string, string | string[] | undefined> = {};
+  for (const [name, value] of entries) {
+    const lower = name.toLowerCase();
+    if (lower === FETCH_MODE_HEADER) continue;
+    if (lower === 'sec-fetch-mode') {
+      if (mode) headers[name] = mode;
+    } else {
+      headers[name] = value;
+    }
+  }
+  return dispatch({ ...options, headers }, handler);
+};
 
 /** The parts of a fetch response wraith reads. */
 export interface FetchResponse {
@@ -106,30 +136,55 @@ export interface Fetcher {
   close(): Promise<void>;
 }
 
+export interface FetcherOptions {
+  /**
+   * When a request's user agent is a browser, fill in the other headers that browser sends, with
+   * languages for `locale`. Off when not given.
+   */
+  browserHeaders?: { locale: string };
+}
+
 /**
  * A fetch that sends each request through the next proxy in turn, or straight out when there are
  * no proxies (or the URL is on the proxy's bypass list). With user agents, each request gets one,
  * unless it sets its own: the same one for every request through a given proxy, so an address
  * doesn't change browsers between requests, or the next in turn without proxies.
  */
-export function createFetcher(proxies: readonly ProxySettings[], userAgents: readonly string[] = []): Fetcher {
+export function createFetcher(proxies: readonly ProxySettings[], userAgents: readonly string[] = [], options: FetcherOptions = {}): Fetcher {
   const dispatchers = new Map<ProxySettings, Dispatcher>();
+  // For direct requests that present a browser; created on first use.
+  let direct: Dispatcher | undefined;
   let next = 0;
   return {
     async fetch(url, init) {
       const turn = next++;
       const index = proxies.length > 0 ? turn % proxies.length : turn;
       const agent = userAgents.length > 0 ? userAgents[index % userAgents.length] : undefined;
-      if (agent) {
+      let presentsBrowser = false;
+      if (agent || options.browserHeaders) {
         const headers = new Headers(init.headers);
-        if (!headers.has('user-agent')) headers.set('user-agent', agent);
+        if (agent && !headers.has('user-agent')) headers.set('user-agent', agent);
+        const userAgent = headers.get('user-agent');
+        const extra =
+          options.browserHeaders && userAgent
+            ? browserHeaders(userAgent, url, { method: init.method, locale: options.browserHeaders.locale })
+            : null;
+        if (extra) {
+          presentsBrowser = true;
+          for (const [name, value] of Object.entries(extra)) {
+            if (!headers.has(name)) headers.set(name, value);
+          }
+          headers.set(FETCH_MODE_HEADER, headers.get('sec-fetch-mode') ?? '');
+        }
         init = { ...init, headers };
       }
       const proxy = proxies[index];
-      if (!proxy || bypassesProxy(proxy, url)) return fetch(url, init);
-      let dispatcher = dispatchers.get(proxy);
-      if (!dispatcher) {
-        dispatcher = dispatcherFor(proxy);
+      let dispatcher: Dispatcher;
+      if (!proxy || bypassesProxy(proxy, url)) {
+        if (!presentsBrowser) return fetch(url, init);
+        dispatcher = direct ??= new Agent().compose(restoreFetchMode);
+      } else {
+        dispatcher = dispatchers.get(proxy) ?? dispatcherFor(proxy);
         dispatchers.set(proxy, dispatcher);
       }
       // undici's own fetch: Node's built-in one can't take a dispatcher from a different undici version.
@@ -143,8 +198,9 @@ export function createFetcher(proxies: readonly ProxySettings[], userAgents: rea
       };
     },
     async close() {
-      const open = [...dispatchers.values()];
+      const open = [...dispatchers.values(), ...(direct ? [direct] : [])];
       dispatchers.clear();
+      direct = undefined;
       await Promise.all(open.map((dispatcher) => dispatcher.close().catch(() => {})));
     },
   };

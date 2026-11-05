@@ -2,6 +2,19 @@
 
 wraith follows [semantic versioning](https://semver.org). While it's in beta (`0.x` pre-releases), any release may change the API; changes will be listed here.
 
+## Unreleased
+
+**Identity**
+
+- With a Chrome or Edge user agent on Chromium, client hints (`Sec-CH-UA*` headers and `navigator.userAgentData`), `navigator.platform` and languages now match the user agent, instead of still naming HeadlessChrome on Linux. Setting a user agent also sets `context.locale` to `en-US` unless you choose one.
+- With a browser user agent, static fetches send that browser's other headers: Accept, Accept-Language, client hints and `Sec-Fetch-*`. Turn off with `network.browserHeaders: false`.
+
+**Bot protection**
+
+- Block and challenge pages from Cloudflare, Akamai, DataDome, HUMAN (PerimeterX), Kasada, Imperva, AWS WAF, F5, Sucuri, Vercel and Anubis throw `BlockedError`, and are never retried. Browser pages give a JavaScript check up to 15 seconds to clear first. **Behaviour change:** these used to come back as ordinary pages (or be retried, with a 429 or 503). `network.onBlock: 'return'` brings back the page, with `blocked` saying what answered.
+- `page.blocked()`, `staticPage.blocked` and `detectBlock()`.
+- `detectChallenge()` and the hand-off find DataDome's CAPTCHA and HUMAN's "Press & Hold".
+
 ## 0.1.0-beta.0
 
 First public beta.

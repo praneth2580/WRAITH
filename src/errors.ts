@@ -1,3 +1,5 @@
+import { PROTECTION_NAMES, type Block, type BotProtection } from './blocks.js';
+
 /** Base class for every error wraith throws. */
 export class WraithError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -31,6 +33,31 @@ export class WaitTimeoutError extends WraithError {}
 
 /** A CAPTCHA or verification step couldn't be handed to a person, or wasn't solved in time. */
 export class ChallengeError extends WraithError {}
+
+/**
+ * A bot protection service (Cloudflare, Akamai, DataDome…) answered instead of the site: it
+ * refused the request, or challenged it and the challenge wasn't passed. Never retried. Turn off
+ * with `network.onBlock: 'return'`.
+ */
+export class BlockedError extends WraithError {
+  readonly vendor: BotProtection;
+  readonly kind: Block['kind'];
+  readonly status: number;
+  readonly url: string;
+  /** What identified the service, such as `cf-mitigated: challenge header`. */
+  readonly evidence: string;
+
+  constructor(block: Block, advice: string) {
+    const name = PROTECTION_NAMES[block.vendor];
+    const what = block.kind === 'block' ? 'refused' : 'challenged';
+    super(`${name} ${what} ${block.url} (HTTP ${block.status}, ${block.evidence}). ${advice}`);
+    this.vendor = block.vendor;
+    this.kind = block.kind;
+    this.status = block.status;
+    this.url = block.url;
+    this.evidence = block.evidence;
+  }
+}
 
 /** An optional package (such as an AI SDK) is needed but not installed. */
 export class MissingDependencyError extends WraithError {

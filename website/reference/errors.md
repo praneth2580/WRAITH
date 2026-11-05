@@ -24,6 +24,7 @@ try {
 | `AIError` | A provider failed, refused, replied outside the schema, or the content was over `maxInputChars` | |
 | `MissingDependencyError` | An optional package, such as `@anthropic-ai/sdk`, isn't installed | `packageName` |
 | `HoneypotError` | With `avoidHoneypots`, an action's element is one a person couldn't see | `reason`, `element` |
+| `BlockedError` | [Bot protection](/guide/bot-protection) refused the request, or challenged it and the challenge wasn't passed. Never retried; `network.onBlock: 'return'` turns it off | `vendor`, `kind`, `status`, `url`, `evidence` |
 
 Errors from Playwright pass through unchanged. The common one is its `TimeoutError`, when an element never becomes ready within the timeout. Its message names the step that timed out.
 

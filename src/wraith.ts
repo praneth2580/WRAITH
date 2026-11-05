@@ -1,5 +1,6 @@
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page } from 'playwright';
 import { AIClient } from './ai/client.js';
+import { adviceFor } from './blocks.js';
 import {
   resolveAfterAction,
   resolveHuman,
@@ -11,13 +12,14 @@ import {
 } from './config.js';
 import { ConsentManager } from './consent.js';
 import { runCrawl, type CrawlOptions, type CrawlResult } from './crawl.js';
-import { HttpError, WraithError } from './errors.js';
+import { BlockedError, HttpError, WraithError } from './errors.js';
 import type { FieldSpec } from './extract/schema.js';
 import { resolveHandoff, type ResolvedHandoff } from './handoff.js';
 import type { HumanBehavior } from './human/behavior.js';
 import { Humanizer } from './human/humanizer.js';
 import { createRng } from './human/random.js';
 import { resolveLogger, type Logger } from './logger.js';
+import { installIdentity, parseUserAgent } from './net/identity.js';
 import { createFetcher, redactProxy, resolveProxies, type Fetcher, type ProxySettings } from './net/proxy.js';
 import { isRetryableStatus, Scheduler } from './net/scheduler.js';
 import { resolveUserAgents } from './net/user-agents.js';
@@ -26,6 +28,9 @@ import { StaticPage } from './static-page.js';
 import { NetworkTracker, resolveSettle, type AfterAction, type ResolvedSettle } from './wait.js';
 
 const ENGINES = { chromium, firefox, webkit };
+
+/** The language browser pages and static fetches present when a user agent is set and `context.locale` isn't. */
+const DEFAULT_LOCALE = 'en-US';
 
 export interface FetchOptions {
   method?: string;
@@ -91,6 +96,8 @@ export class Wraith {
   private readonly slots: Slot[];
   private readonly fetcher: Fetcher;
   private sharedBrowser: Promise<Browser> | undefined;
+  /** Per context: sets up a page so it presents its user agent consistently (Chromium only). */
+  private readonly identities = new WeakMap<BrowserContext, (page: Page) => Promise<void>>();
   private pageCount = 0;
   private nextSlot = 0;
 
@@ -126,7 +133,11 @@ export class Wraith {
       live: undefined,
       openPages: 0,
     }));
-    this.fetcher = createFetcher(proxies, agents.requests);
+    this.fetcher = createFetcher(
+      proxies,
+      agents.requests,
+      this.network.browserHeaders ? { browserHeaders: { locale: options.context?.locale ?? DEFAULT_LOCALE } } : {},
+    );
     this.scheduler = new Scheduler(this.network, this.logger, this.fetcher);
     this.aiClient = options.ai ? new AIClient(options.ai, this.logger) : undefined;
     this.afterAction = resolveAfterAction(options.waits?.afterAction);
@@ -160,7 +171,14 @@ export class Wraith {
     slot.openPages++;
     let raw: Page;
     try {
-      raw = await (await this.context(slot.index)).newPage();
+      const context = await this.context(slot.index);
+      raw = await context.newPage();
+      try {
+        await this.identities.get(context)?.(raw);
+      } catch (error) {
+        await raw.close().catch(() => {});
+        throw error;
+      }
     } catch (error) {
       slot.openPages--;
       throw error;
@@ -185,6 +203,7 @@ export class Wraith {
       ai: this.aiClient,
       instance: slot.index,
       avoidHoneypots: this.options.avoidHoneypots ?? false,
+      onBlock: this.network.onBlock,
     });
   }
 
@@ -217,11 +236,15 @@ export class Wraith {
         redirect: 'follow',
         signal: AbortSignal.timeout(options.timeout ?? this.network.timeout),
       });
-      if (isRetryableStatus(response.status)) throw new HttpError(response.status, url);
       const body = await response.text();
-      return new StaticPage(response.url || url, response.status, response.headers, body, this.aiClient, {
+      const page = new StaticPage(response.url || url, response.status, response.headers, body, this.aiClient, {
         avoidHoneypots: this.options.avoidHoneypots ?? false,
       });
+      // A block page isn't retried, even with a retryable status: asking again only adds load.
+      const block = page.blocked;
+      if (block && this.network.onBlock === 'throw') throw new BlockedError(block, adviceFor(block, 'static'));
+      if (!block && isRetryableStatus(response.status)) throw new HttpError(response.status, url);
+      return page;
     });
   }
 
@@ -323,12 +346,28 @@ export class Wraith {
       );
     }
     const browser = await this.browserFor(slot);
+    const userAgent = slot.userAgent ?? this.options.context?.userAgent;
+    const identity = userAgent ? parseUserAgent(userAgent) : null;
+    // Chromium's client hints and navigator.platform can be matched to a Chrome or Edge user agent.
+    const matchIdentity = (this.options.browser ?? 'chromium') === 'chromium' && (identity?.family === 'chrome' || identity?.family === 'edge');
+    const locale = this.options.context?.locale ?? DEFAULT_LOCALE;
     const context = await browser.newContext({
       ...this.options.context,
       ...(slot.proxy ? { proxy: slot.proxy } : {}),
       ...(slot.userAgent ? { userAgent: slot.userAgent } : {}),
+      // A browser always has a language; without one, headless Chromium sends no Accept-Language.
+      ...(matchIdentity ? { locale } : {}),
     });
     try {
+      if (matchIdentity && userAgent) {
+        const prepare = installIdentity(context, {
+          userAgent,
+          locale,
+          browserVersion: browser.version(),
+          onError: (error) => this.logger.warn(`Couldn't match a new tab's client hints to its user agent: ${error.message}`),
+        });
+        if (prepare) this.identities.set(context, prepare);
+      }
       context.setDefaultTimeout(this.network.timeout);
       const blocked = new Set<string>(this.options.blockResources ?? []);
       if (blocked.size > 0) {

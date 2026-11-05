@@ -53,6 +53,16 @@ wraith waits until the element is visible, enabled, still and uncovered. Usual c
 
 The [devtools](/guide/devtools) `inspect` action shows every match, which one wraith uses, and why it isn't clickable.
 
+### `BlockedError`
+
+The site's bot protection answered instead of the site. `error.vendor` names the service and `error.kind` says what it did:
+
+- **`'block'`**: it refused this client. Check the site's terms, slow down (lower `rateLimit`), or ask the owner for access or an API.
+- **`'challenge'` from `fetch()`**: a static fetch can't run the check. Use a browser page.
+- **`'challenge'` from a browser page**: it didn't clear within 15 seconds. If it's a CAPTCHA, turn on [`handoff`](/guide/captchas). If it's a check that never clears, the site isn't letting this browser in.
+
+See [Bot protection](/guide/bot-protection).
+
 ### `extract()` returns `null` for everything
 
 - The content is rendered by JavaScript, and you used `wraith.fetch()`. Use a browser page.

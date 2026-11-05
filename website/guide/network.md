@@ -62,6 +62,12 @@ const wraith = createWraith({
 
 `network.userAgent` still works, for static fetches and robots.txt only.
 
+With a browser user agent, static fetches also send the rest of that browser's headers (`network.browserHeaders`, on by default). See [What a user agent changes](/guide/proxies#what-a-user-agent-changes).
+
+## Bot protection
+
+When a bot protection service such as Cloudflare or DataDome answers instead of the site, `fetch()` and `goto()` throw `BlockedError` and don't retry, even for a 429 or 503. `network.onBlock: 'return'` returns the page instead, with `blocked` saying what answered. See [Bot protection](/guide/bot-protection).
+
 ## Proxies
 
 `proxy` sends page loads, static fetches and robots.txt requests through one or more proxy servers. With a list, each browser instance gets its own proxy and static fetches take turns. See [Proxies and instances](/guide/proxies).

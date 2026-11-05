@@ -83,6 +83,8 @@ Each preset's values are listed in the [Human behaviour guide](/guide/human-beha
 | `respectRobotsTxt` | `boolean` | `false` | Throw `RobotsDisallowedError` for disallowed URLs; a Crawl-delay replaces the rate limit |
 | `userAgent` | `string` | | For static fetches and robots.txt matching |
 | `headers` | `Record<string, string>` | | Extra headers for static fetches |
+| `browserHeaders` | `boolean` | `true` | With a browser user agent, static fetches also send that browser's Accept, Accept-Language, client hints and `Sec-Fetch-*`. [Guide](/guide/proxies#what-a-user-agent-changes) |
+| `onBlock` | `'throw' \| 'return'` | `'throw'` | When bot protection answers instead of the site: throw `BlockedError`, or return the page with `blocked` set. Never retried either way. [Guide](/guide/bot-protection) |
 
 [Guide](/guide/network)
 
@@ -133,6 +135,8 @@ type UserAgentOption = 'rotate' | string | readonly string[];
 ```
 
 A string is used everywhere, and also names you in robots.txt matching. With a list, instance `i` gets agent `i % list.length`, and static fetches take them in turn (keeping one per proxy when there are proxies). `'rotate'` uses `builtInUserAgents()`: current Chrome, Edge, Firefox and Safari desktop agents, with versions from the browsers Playwright installs, limited to the running engine for browser pages. Can't be combined with `context.userAgent` or `network.userAgent`. [Guide](/guide/proxies#user-agents)
+
+With a Chrome or Edge user agent on Chromium, client hints, `navigator.platform` and languages match it, and `context.locale` defaults to `en-US`. With any browser user agent, static fetches send that browser's other headers (see `network.browserHeaders`). [What a user agent changes](/guide/proxies#what-a-user-agent-changes)
 
 ## avoidHoneypots
 

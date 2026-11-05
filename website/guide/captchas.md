@@ -18,7 +18,7 @@ if (challenge) {
 | Field | |
 | --- | --- |
 | `kind` | `'captcha'`, `'otp'` (a one-time code prompt) or `'browser-check'` |
-| `provider` | `'recaptcha'`, `'hcaptcha'`, `'turnstile'`, `'geetest'`, `'image'`, `'cloudflare'` or `'otp'` |
+| `provider` | `'recaptcha'`, `'hcaptcha'`, `'turnstile'`, `'geetest'`, `'datadome'`, `'perimeterx'` (HUMAN's "Press & Hold"), `'image'`, `'cloudflare'` or `'otp'` |
 | `message` | A one-line explanation for the person. For codes, it includes the page's own wording, such as "We sent a code to +91 98•••••210" |
 | `image` | A PNG `Buffer` of the challenge: the CAPTCHA image or widget, or the form asking for the code |
 | `answerable` | `true` when typing an answer solves it (image CAPTCHAs, codes). `false` for widgets that need clicks |
@@ -78,6 +78,8 @@ const wraith = createWraith({
 ## Browser checks
 
 Cloudflare's "Checking your browser" page usually clears by itself. `handoff()` first waits up to 15 seconds for it to go away before involving anyone.
+
+Without `handoff`, `goto()` gives browser checks from Cloudflare and other services the same 15 seconds, then throws `BlockedError` if they're still there. See [Bot protection](/guide/bot-protection).
 
 ## Errors
 

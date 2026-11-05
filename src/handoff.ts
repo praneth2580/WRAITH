@@ -74,6 +74,8 @@ const NAMES: Record<ChallengeProvider, string> = {
   hcaptcha: 'hCaptcha',
   turnstile: 'Cloudflare Turnstile',
   geetest: 'GeeTest',
+  datadome: 'DataDome',
+  perimeterx: 'HUMAN (PerimeterX) "Press & Hold"',
   image: 'image',
   cloudflare: 'Cloudflare',
   otp: 'one-time code',

@@ -1,5 +1,6 @@
 import { load, type CheerioAPI } from 'cheerio';
 import { ContentAI, type AIClient } from './ai/client.js';
+import { detectBlock, type Block } from './blocks.js';
 import { WraithError } from './errors.js';
 import { extractLinks, htmlToMarkdown, htmlToText } from './extract/content.js';
 import { documentBaseUrl, extractWithSchema, type InferSchema, type SelectorSchema } from './extract/schema.js';
@@ -13,6 +14,7 @@ export class StaticPage {
   /** The parsed document, for anything the helpers don't cover. */
   readonly $: CheerioAPI;
   private aiHelper: ContentAI | undefined;
+  private blockFound: Block | null | undefined;
 
   constructor(
     /** Final URL, after redirects. */
@@ -29,6 +31,18 @@ export class StaticPage {
 
   get ok(): boolean {
     return this.status >= 200 && this.status < 300;
+  }
+
+  /**
+   * The bot protection service that answered instead of the site (its block page or challenge),
+   * or null for an ordinary page. Only seen with `network.onBlock: 'return'`; otherwise `fetch()`
+   * throws `BlockedError` instead.
+   */
+  get blocked(): Block | null {
+    if (this.blockFound === undefined) {
+      this.blockFound = detectBlock({ url: this.url, status: this.status, headers: this.headers, body: this.body });
+    }
+    return this.blockFound;
   }
 
   /** Pulls values out with CSS selectors. See SelectorSchema for the format. */

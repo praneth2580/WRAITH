@@ -13,4 +13,6 @@ wraith makes automation polite and natural-looking. It doesn't make it permitted
 
 wraith doesn't solve CAPTCHAs, send them to solving services, or ask AI models to solve them. A CAPTCHA is a site's explicit signal that it wants a person there, so wraith [hands it to one](/guide/captchas).
 
-Human-like input, proxies and user agents exist so that automation of legitimate tasks is reliable and behaves the way the site's designers expect people to. They aren't tools for evading a site's decision to block automation, and the rate limit applies per site however many proxies or user agents you use. [Avoiding honeypots](/guide/honeypots) keeps your scraper from tripping traps by accident; it doesn't make it welcome where it isn't.
+Human-like input, proxies and user agents exist so that automation of legitimate tasks is reliable and behaves the way the site's designers expect people to. They aren't tools for evading a site's decision to block automation, and the rate limit applies per site however many proxies or user agents you use.
+
+When a site's [bot protection](/guide/bot-protection) blocks or challenges a request, wraith stops with `BlockedError` rather than retrying. It doesn't hide that its browser is automated (`navigator.webdriver` stays `true`), replay clearance cookies, or rotate proxies to get past a block. [Avoiding honeypots](/guide/honeypots) keeps your scraper from tripping traps by accident; it doesn't make it welcome where it isn't.

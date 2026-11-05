@@ -26,6 +26,7 @@ export { JsonCapture, type CapturedJson, type ResponseMatcher } from './capture.
 export type { PaginateOptions } from './paginate.js';
 export type { ConsentChoice, ConsentStatus } from './consent.js';
 export type { Challenge, ChallengeHandler, ChallengeProvider, HandoffOptions } from './handoff.js';
+export { detectBlock, type Block, type BotProtection } from './blocks.js';
 export type { CrawlOptions, CrawlContext, CrawlResult, UrlFilter } from './crawl.js';
 
 export { Humanizer, type ClickOptions, type TypeOptions } from './human/humanizer.js';
@@ -72,6 +73,7 @@ export {
   WaitTimeoutError,
   ChallengeError,
   HoneypotError,
+  BlockedError,
 } from './errors.js';
 export { consoleLogger, silentLogger, type Logger } from './logger.js';
 
